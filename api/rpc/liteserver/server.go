@@ -6,8 +6,8 @@ import (
 	"net"
 	"time"
 
-	pb "github.com/xxf098/lite-proxy/api/rpc/lite"
-	"github.com/xxf098/lite-proxy/web"
+	pb "github.com/1orz/proxy-speedtest/api/rpc/lite"
+	"github.com/1orz/proxy-speedtest/web"
 	"google.golang.org/grpc"
 )
 

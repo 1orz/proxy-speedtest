@@ -5,7 +5,7 @@ package dialer
 import (
 	"syscall"
 
-	"github.com/xxf098/lite-proxy/common"
+	"github.com/1orz/proxy-speedtest/common"
 	"golang.org/x/sys/unix"
 )
 

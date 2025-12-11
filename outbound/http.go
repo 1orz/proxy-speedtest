@@ -13,8 +13,8 @@ import (
 	"net/url"
 	"strconv"
 
-	C "github.com/xxf098/lite-proxy/constant"
-	"github.com/xxf098/lite-proxy/transport/dialer"
+	C "github.com/1orz/proxy-speedtest/constant"
+	"github.com/1orz/proxy-speedtest/transport/dialer"
 )
 
 type Http struct {

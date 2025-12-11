@@ -3,9 +3,10 @@ package config
 import (
 	"strings"
 
-	"github.com/xxf098/lite-proxy/common"
-	"github.com/xxf098/lite-proxy/outbound"
-	"github.com/xxf098/lite-proxy/utils"
+	"github.com/1orz/proxy-speedtest/common"
+	"github.com/1orz/proxy-speedtest/outbound"
+	"github.com/1orz/proxy-speedtest/proxy/xray"
+	"github.com/1orz/proxy-speedtest/utils"
 )
 
 func Link2Dialer(link string) (outbound.Dialer, error) {
@@ -14,41 +15,50 @@ func Link2Dialer(link string) (outbound.Dialer, error) {
 		return nil, err
 	}
 	var d outbound.Dialer
+
 	switch strings.ToLower(matches[1]) {
 	case "vmess":
-		if option, err1 := VmessLinkToVmessOption(link); err1 != nil {
-			return nil, err1
-		} else {
-			d, err = outbound.NewVmess(option)
+		// Use original VMess implementation
+		option, err := VmessLinkToVmessOption(link)
+		if err != nil {
+			return nil, err
+		}
+		d, err = outbound.NewVmess(option)
+		if err != nil {
+			return nil, err
 		}
 	case "vless":
-		if option, err1 := VlessLinkToVlessOption(link); err1 != nil {
-			return nil, err1
-		} else {
-			d, err = outbound.NewVless(option)
+		config, err := xray.ParseVLESSLink(link)
+		if err != nil {
+			return nil, err
+		}
+		d, err = outbound.NewXrayDialer(config)
+		if err != nil {
+			return nil, err
 		}
 	case "trojan":
-		if option, err1 := TrojanLinkToTrojanOption(link); err1 != nil {
-			return nil, err1
-		} else {
-			d, err = outbound.NewTrojan(option)
+		config, err := xray.ParseTrojanLink(link)
+		if err != nil {
+			return nil, err
+		}
+		d, err = outbound.NewXrayDialer(config)
+		if err != nil {
+			return nil, err
 		}
 	case "ss":
-		if option, err1 := SSLinkToSSOption(link); err1 != nil {
-			return nil, err1
-		} else {
-			d, err = outbound.NewShadowSocks(option)
+		config, err := xray.ParseSSLink(link)
+		if err != nil {
+			return nil, err
 		}
-	case "ssr":
-		if option, err1 := SSRLinkToSSROption(link); err1 != nil {
-			return nil, err1
-		} else {
-			d, err = outbound.NewShadowSocksR(option)
+		d, err = outbound.NewXrayDialer(config)
+		if err != nil {
+			return nil, err
 		}
 	default:
-		return nil, common.NewError("Not Suported Link")
+		return nil, common.NewError("Not Supported Link: " + matches[1])
 	}
-	return d, err
+
+	return d, nil
 }
 
 type Config struct {
@@ -66,101 +76,75 @@ func Link2Config(link string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	var cfg *Config = &Config{
-		Protocol: "unknown",
-		Remarks:  "",
-		Server:   "127.0.0.1",
-		Port:     80,
-	}
+
 	switch strings.ToLower(matches[1]) {
 	case "vmess":
-		if cfgVmess, err1 := VmessLinkToVmessConfigIP(link, false); err1 != nil {
-			return nil, err1
-		} else {
-			remarks := cfgVmess.Ps
-			if len(remarks) < 1 {
-				remarks = cfgVmess.Add
-			}
-			cfg = &Config{
-				Protocol: "vmess",
-				Remarks:  remarks,
-				Server:   cfgVmess.Add,
-				Port:     cfgVmess.PortInt,
-				Net:      cfgVmess.Net,
-				Password: cfgVmess.ID,
-				SNI:      cfgVmess.Host,
-			}
+		cfgVmess, err := VmessLinkToVmessConfigIP(link, false)
+		if err != nil {
+			return nil, err
 		}
-	case "trojan":
-		if cfgTrojan, err1 := TrojanLinkToTrojanOption(link); err1 != nil {
-			return nil, err1
-		} else {
-			cfg = &Config{
-				Protocol: "trojan",
-				Remarks:  cfgTrojan.Remarks,
-				Server:   cfgTrojan.Server,
-				Port:     cfgTrojan.Port,
-				Password: cfgTrojan.Password,
-				Net:      cfgTrojan.Network,
-				SNI:      cfgTrojan.SNI,
-			}
+		remarks := cfgVmess.Ps
+		if len(remarks) < 1 {
+			remarks = cfgVmess.Add
 		}
-	case "http":
-		if cfgHttp, err1 := HttpLinkToHttpOption(link); err1 != nil {
-			return nil, err1
-		} else {
-			cfg = &Config{
-				Protocol: "http",
-				Remarks:  cfgHttp.Remarks,
-				Server:   cfgHttp.Server,
-				Port:     cfgHttp.Port,
-				Password: cfgHttp.Password,
-			}
-		}
-	case "ss":
-		if cfgSS, err1 := SSLinkToSSOption(link); err1 != nil {
-			return nil, err1
-		} else {
-			cfg = &Config{
-				Protocol: "ss",
-				Remarks:  cfgSS.Remarks,
-				Server:   cfgSS.Server,
-				Port:     cfgSS.Port,
-				Password: cfgSS.Password,
-			}
-		}
-	case "ssr":
-		if cfgSSR, err1 := SSRLinkToSSROption(link); err1 != nil {
-			return nil, err1
-		} else {
-			cfg = &Config{
-				Protocol: "ssr",
-				Remarks:  cfgSSR.Remarks,
-				Server:   cfgSSR.Server,
-				Port:     cfgSSR.Port,
-				Password: cfgSSR.Password,
-			}
-		}
+		return &Config{
+			Protocol: "vmess",
+			Remarks:  remarks,
+			Server:   cfgVmess.Add,
+			Port:     cfgVmess.PortInt,
+			Net:      cfgVmess.Net,
+			Password: cfgVmess.ID,
+			SNI:      cfgVmess.Host,
+		}, nil
+
 	case "vless":
-		if cfgVless, err1 := VlessLinkToVlessOption(link); err1 != nil {
-			return nil, err1
-		} else {
-			remarks := cfgVless.Remarks
-			if len(remarks) < 1 {
-				remarks = cfgVless.Server
-			}
-			cfg = &Config{
-				Protocol: "vless",
-				Remarks:  remarks,
-				Server:   cfgVless.Server,
-				Port:     int(cfgVless.Port),
-				Net:      cfgVless.Network,
-				Password: cfgVless.UUID,
-				SNI:      cfgVless.ServerName,
-			}
+		config, err := xray.ParseVLESSLink(link)
+		if err != nil {
+			return nil, err
 		}
+		remarks := config.Name
+		if remarks == "" {
+			remarks = config.Address
+		}
+		return &Config{
+			Protocol: "vless",
+			Remarks:  remarks,
+			Server:   config.Address,
+			Port:     int(config.Port),
+			Net:      config.Network,
+			Password: config.UUID,
+			SNI:      config.ServerName,
+		}, nil
+
+	case "trojan":
+		config, err := xray.ParseTrojanLink(link)
+		if err != nil {
+			return nil, err
+		}
+		return &Config{
+			Protocol: "trojan",
+			Remarks:  config.Name,
+			Server:   config.Address,
+			Port:     int(config.Port),
+			Net:      config.Network,
+			Password: config.Password,
+			SNI:      config.ServerName,
+		}, nil
+
+	case "ss":
+		config, err := xray.ParseSSLink(link)
+		if err != nil {
+			return nil, err
+		}
+		return &Config{
+			Protocol: "ss",
+			Remarks:  config.Name,
+			Server:   config.Address,
+			Port:     int(config.Port),
+			Password: config.Password,
+		}, nil
+
 	default:
-		return nil, common.NewError("Not Suported Link")
+		return nil, common.NewError("Not Supported Link: " + matches[1])
 	}
-	return cfg, err
 }

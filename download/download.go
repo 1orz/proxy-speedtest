@@ -11,11 +11,11 @@ import (
 
 	"errors"
 
-	"github.com/xxf098/lite-proxy/common/pool"
-	"github.com/xxf098/lite-proxy/outbound"
-	"github.com/xxf098/lite-proxy/proxy"
-	"github.com/xxf098/lite-proxy/stats"
-	"github.com/xxf098/lite-proxy/utils"
+	"github.com/1orz/proxy-speedtest/common/pool"
+	"github.com/1orz/proxy-speedtest/outbound"
+	"github.com/1orz/proxy-speedtest/proxy"
+	"github.com/1orz/proxy-speedtest/stats"
+	"github.com/1orz/proxy-speedtest/utils"
 )
 
 const (

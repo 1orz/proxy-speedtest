@@ -3,7 +3,7 @@ package socks
 import (
 	"context"
 
-	"github.com/xxf098/lite-proxy/tunnel"
+	"github.com/1orz/proxy-speedtest/tunnel"
 )
 
 const Name = "SOCKS"
