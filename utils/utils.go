@@ -69,6 +69,7 @@ func IsUrl(message string) bool {
 func IsFilePath(message string) bool {
 	if len(message) < 1024 &&
 		!strings.HasPrefix(message, "vmess://") &&
+		!strings.HasPrefix(message, "vless://") &&
 		!strings.HasPrefix(message, "trojan://") &&
 		!strings.HasPrefix(message, "ssr://") &&
 		!strings.HasPrefix(message, "ss://") {
