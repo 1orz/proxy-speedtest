@@ -10,14 +10,14 @@ import (
 	"strconv"
 	"strings"
 
-	C "github.com/xxf098/lite-proxy/constant"
-	"github.com/xxf098/lite-proxy/log"
-	"github.com/xxf098/lite-proxy/stats"
-	"github.com/xxf098/lite-proxy/transport/dialer"
-	"github.com/xxf098/lite-proxy/transport/resolver"
-	"github.com/xxf098/lite-proxy/transport/socks5"
-	"github.com/xxf098/lite-proxy/transport/vmess"
-	"github.com/xxf098/lite-proxy/utils"
+	C "github.com/1orz/proxy-speedtest/constant"
+	"github.com/1orz/proxy-speedtest/log"
+	"github.com/1orz/proxy-speedtest/stats"
+	"github.com/1orz/proxy-speedtest/transport/dialer"
+	"github.com/1orz/proxy-speedtest/transport/resolver"
+	"github.com/1orz/proxy-speedtest/transport/socks5"
+	"github.com/1orz/proxy-speedtest/transport/vmess"
+	"github.com/1orz/proxy-speedtest/utils"
 )
 
 type Vmess struct {

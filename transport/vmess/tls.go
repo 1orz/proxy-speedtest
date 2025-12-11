@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"net"
 
-	C "github.com/xxf098/lite-proxy/constant"
+	C "github.com/1orz/proxy-speedtest/constant"
 )
 
 type TLSConfig struct {

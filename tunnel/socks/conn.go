@@ -4,8 +4,8 @@ import (
 	"context"
 	"net"
 
-	"github.com/xxf098/lite-proxy/common"
-	"github.com/xxf098/lite-proxy/tunnel"
+	"github.com/1orz/proxy-speedtest/common"
+	"github.com/1orz/proxy-speedtest/tunnel"
 )
 
 type Conn struct {

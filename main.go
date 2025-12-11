@@ -10,11 +10,11 @@ import (
 	"strings"
 	"syscall"
 
-	grpcServer "github.com/xxf098/lite-proxy/api/rpc/liteserver"
-	C "github.com/xxf098/lite-proxy/constant"
-	"github.com/xxf098/lite-proxy/core"
-	"github.com/xxf098/lite-proxy/utils"
-	webServer "github.com/xxf098/lite-proxy/web"
+	grpcServer "github.com/1orz/proxy-speedtest/api/rpc/liteserver"
+	C "github.com/1orz/proxy-speedtest/constant"
+	"github.com/1orz/proxy-speedtest/core"
+	"github.com/1orz/proxy-speedtest/utils"
+	webServer "github.com/1orz/proxy-speedtest/web"
 )
 
 var (

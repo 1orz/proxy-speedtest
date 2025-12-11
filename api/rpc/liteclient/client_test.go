@@ -3,8 +3,8 @@ package liteclient
 import (
 	"testing"
 
-	pb "github.com/xxf098/lite-proxy/api/rpc/lite"
-	s "github.com/xxf098/lite-proxy/api/rpc/liteserver"
+	pb "github.com/1orz/proxy-speedtest/api/rpc/lite"
+	s "github.com/1orz/proxy-speedtest/api/rpc/liteserver"
 )
 
 func TestStartClient(t *testing.T) {

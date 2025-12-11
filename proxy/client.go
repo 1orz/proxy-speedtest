@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net"
 
-	C "github.com/xxf098/lite-proxy/constant"
-	"github.com/xxf098/lite-proxy/outbound"
-	"github.com/xxf098/lite-proxy/tunnel"
+	C "github.com/1orz/proxy-speedtest/constant"
+	"github.com/1orz/proxy-speedtest/outbound"
+	"github.com/1orz/proxy-speedtest/tunnel"
 )
 
 type Client struct {

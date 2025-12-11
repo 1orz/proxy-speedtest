@@ -7,7 +7,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/xxf098/lite-proxy/common/pool"
+	"github.com/1orz/proxy-speedtest/common/pool"
 )
 
 type aeadWriter struct {

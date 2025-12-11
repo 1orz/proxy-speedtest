@@ -4,8 +4,8 @@ import (
 	"context"
 	"net"
 
-	"github.com/xxf098/lite-proxy/common"
-	C "github.com/xxf098/lite-proxy/constant"
+	"github.com/1orz/proxy-speedtest/common"
+	C "github.com/1orz/proxy-speedtest/constant"
 )
 
 type Base struct {

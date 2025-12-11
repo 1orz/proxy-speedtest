@@ -7,8 +7,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/xxf098/lite-proxy/download"
-	"github.com/xxf098/lite-proxy/web"
+	"github.com/1orz/proxy-speedtest/download"
+	"github.com/1orz/proxy-speedtest/web"
 )
 
 func main() {
