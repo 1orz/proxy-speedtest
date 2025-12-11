@@ -188,6 +188,27 @@ func PingSSR(ssrOption *outbound.ShadowSocksROption) (int64, error) {
 	return pingInternal(remoteConn)
 }
 
+func PingVless(vlessOption *outbound.VlessOption) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), tcpTimeout)
+	defer cancel()
+	vless, err := outbound.NewVless(vlessOption)
+	if err != nil {
+		return 0, err
+	}
+	meta := &C.Metadata{
+		NetWork: 0,
+		Type:    0,
+		SrcPort: "",
+		DstPort: "80",
+		Host:    remoteHost,
+	}
+	remoteConn, err := vless.DialContext(ctx, meta)
+	if err != nil {
+		return 0, err
+	}
+	return pingInternal(remoteConn)
+}
+
 type PingResult struct {
 	elapse int64
 	err    error
@@ -210,6 +231,8 @@ func PingLinkInternal(link string, pingOption PingOption) (int64, error) {
 	switch strings.ToLower(matches[1]) {
 	case "vmess":
 		option, err = config.VmessLinkToVmessOption(link)
+	case "vless":
+		option, err = config.VlessLinkToVlessOption(link)
 	case "trojan":
 		option, err = config.TrojanLinkToTrojanOption(link)
 	case "http":
@@ -287,6 +310,12 @@ func PingContext(ctx context.Context, option interface{}) (int64, error) {
 	}
 	if vmessOption, ok := option.(*outbound.VmessOption); ok {
 		d, err = outbound.NewVmess(vmessOption)
+		if err != nil {
+			return 0, err
+		}
+	}
+	if vlessOption, ok := option.(*outbound.VlessOption); ok {
+		d, err = outbound.NewVless(vlessOption)
 		if err != nil {
 			return 0, err
 		}

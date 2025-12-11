@@ -1,8 +1,6 @@
 package config
 
 import (
-	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/xxf098/lite-proxy/common"
@@ -22,6 +20,12 @@ func Link2Dialer(link string) (outbound.Dialer, error) {
 			return nil, err1
 		} else {
 			d, err = outbound.NewVmess(option)
+		}
+	case "vless":
+		if option, err1 := VlessLinkToVlessOption(link); err1 != nil {
+			return nil, err1
+		} else {
+			d, err = outbound.NewVless(option)
 		}
 	case "trojan":
 		if option, err1 := TrojanLinkToTrojanOption(link); err1 != nil {
@@ -138,21 +142,22 @@ func Link2Config(link string) (*Config, error) {
 			}
 		}
 	case "vless":
-		u, err := url.Parse(link)
-		if err != nil {
-			return nil, err
-		}
-		port, err := strconv.Atoi(u.Port())
-		if err != nil {
-			return nil, err
-		}
-		password, _ := u.User.Password()
-		cfg = &Config{
-			Protocol: "vless",
-			Remarks:  u.Fragment,
-			Server:   u.Host,
-			Port:     port,
-			Password: password,
+		if cfgVless, err1 := VlessLinkToVlessOption(link); err1 != nil {
+			return nil, err1
+		} else {
+			remarks := cfgVless.Remarks
+			if len(remarks) < 1 {
+				remarks = cfgVless.Server
+			}
+			cfg = &Config{
+				Protocol: "vless",
+				Remarks:  remarks,
+				Server:   cfgVless.Server,
+				Port:     int(cfgVless.Port),
+				Net:      cfgVless.Network,
+				Password: cfgVless.UUID,
+				SNI:      cfgVless.ServerName,
+			}
 		}
 	default:
 		return nil, common.NewError("Not Suported Link")
