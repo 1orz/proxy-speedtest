@@ -1,6 +1,6 @@
 #!/bin/sh
 
-DOWNLOAD_URL=$(curl -s https://api.github.com/repos/xxf098/LiteSpeedTest/releases/latest \
+DOWNLOAD_URL=$(curl -s https://api.github.com/repos/1orz/proxy-speedtest/releases/latest \
         | grep browser_download_url \
         | grep linux-amd64 \
         | grep -v v3- \

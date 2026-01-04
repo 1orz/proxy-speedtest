@@ -1,0 +1,227 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - master
+
+env:
+  GO_VERSION: '1.25.5'
+  NODE_VERSION: '24'
+
+jobs:
+  # Build and Test
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: web/gui/package-lock.json
+
+      - name: Build WASM and GUI
+        run: |
+          cp $(go env GOROOT)/misc/wasm/wasm_exec.js ./web/gui/wasm_exec.js
+          npm install --prefix web/gui
+          NODE_ENV=production npm run --prefix web/gui build
+          GOOS=js GOARCH=wasm go build -o ./web/gui/dist/main.wasm ./wasm
+
+      - name: Build
+        run: go build -o lite
+
+      - name: Test
+        run: |
+          go test -v ./...
+          ls -la lite
+
+  # Multi-platform Release
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: ''
+          - goos: linux
+            goarch: arm64
+            suffix: ''
+          - goos: darwin
+            goarch: amd64
+            suffix: ''
+          - goos: darwin
+            goarch: arm64
+            suffix: ''
+          - goos: windows
+            goarch: amd64
+            suffix: '.exe'
+      fail-fast: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: web/gui/package-lock.json
+
+      - name: Build WASM and GUI
+        run: |
+          cp $(go env GOROOT)/misc/wasm/wasm_exec.js ./web/gui/wasm_exec.js
+          npm install --prefix web/gui
+          NODE_ENV=production npm run --prefix web/gui build
+          GOOS=js GOARCH=wasm go build -o ./web/gui/dist/main.wasm ./wasm
+
+      - name: Get version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          BUILDTIME=$(date -u)
+          go build -trimpath -ldflags "-X 'github.com/1orz/proxy-speedtest/constant.Version=${VERSION}' \
+            -X 'github.com/1orz/proxy-speedtest/constant.BuildTime=${BUILDTIME}' \
+            -w -s" \
+            -o lite-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
+
+      - name: Create archive (Unix)
+        if: matrix.goos != 'windows'
+        run: |
+          chmod +x lite-${{ matrix.goos }}-${{ matrix.goarch }}
+          gzip -9 -c lite-${{ matrix.goos }}-${{ matrix.goarch }} > lite-${{ matrix.goos }}-${{ matrix.goarch }}-${{ steps.get_version.outputs.VERSION }}.gz
+
+      - name: Create archive (Windows)
+        if: matrix.goos == 'windows'
+        run: |
+          zip -9 lite-${{ matrix.goos }}-${{ matrix.goarch }}-${{ steps.get_version.outputs.VERSION }}.zip lite-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lite-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            *.gz
+            *.zip
+
+  # Publish Release
+  publish:
+    name: Publish Release
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          draft: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Docker Build and Push
+  docker:
+    name: Docker
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Get version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+            ${{ secrets.DOCKER_USERNAME }}/proxyspeedtest
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        if: ${{ secrets.DOCKER_USERNAME != '' }}
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
