@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.0.10",
-    "ag-grid-vue3": "^28.2.1",
+    "ag-grid-vue3": "^35.0.0",
     "element-plus": "^2.2.26",
     "vue": "^3.2.45"
   },
