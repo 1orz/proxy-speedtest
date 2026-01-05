@@ -11,6 +11,7 @@
     "@element-plus/icons-vue": "^2.0.10",
     "ag-grid-vue3": "^28.2.1",
     "element-plus": "^2.2.26",
+    "qrcode": "^1.5.3",
     "vue": "^3.2.45"
   },
   "devDependencies": {

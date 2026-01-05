@@ -4,27 +4,24 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/xxf098/lite-proxy/config"
-	"github.com/xxf098/lite-proxy/download"
-	"github.com/xxf098/lite-proxy/request"
-	"github.com/xxf098/lite-proxy/utils"
-	"github.com/xxf098/lite-proxy/web/render"
+	"github.com/1orz/proxy-speedtest/config"
+	"github.com/1orz/proxy-speedtest/download"
+	"github.com/1orz/proxy-speedtest/request"
+	"github.com/1orz/proxy-speedtest/utils"
+	"github.com/1orz/proxy-speedtest/web/render"
 )
 
 var (
@@ -242,7 +239,7 @@ func parseFile(filepath string) ([]string, error) {
 	if isYamlFile(filepath) {
 		return parseClashFileByLine(filepath)
 	}
-	data, err := ioutil.ReadFile(filepath)
+	data, err := os.ReadFile(filepath)
 	if err != nil {
 		return nil, err
 	}
@@ -261,41 +258,6 @@ func parseFile(filepath string) ([]string, error) {
 		}
 	}
 	return links, err
-}
-
-func parseOptions(message string) (*ProfileTestOptions, error) {
-	opts := strings.Split(message, "^")
-	if len(opts) < 7 {
-		return nil, ErrInvalidData
-	}
-	groupName := opts[0]
-	if groupName == "?empty?" || groupName == "" {
-		groupName = "Default"
-	}
-	concurrency, err := strconv.Atoi(opts[5])
-	if err != nil {
-		return nil, err
-	}
-	if concurrency < 1 {
-		concurrency = 1
-	}
-	timeout, err := strconv.Atoi(opts[6])
-	if err != nil {
-		return nil, err
-	}
-	if timeout < 20 {
-		timeout = 20
-	}
-	testOpt := &ProfileTestOptions{
-		GroupName:     groupName,
-		SpeedTestMode: opts[1],
-		PingMethod:    opts[2],
-		SortMethod:    opts[3],
-		Concurrency:   concurrency,
-		TestMode:      ALLTEST,
-		Timeout:       time.Duration(timeout) * time.Second,
-	}
-	return testOpt, nil
 }
 
 const (
@@ -322,6 +284,19 @@ type ProfileTestOptions struct {
 	Unique          bool          `json:"unique"`
 	GeneratePicMode int           `json:"generatePicMode"` // 0: base64 1:pic path 2: no pic 3: json @deprecated use outputMode
 	OutputMode      int           `json:"outputMode"`
+	OutputFilePath  string        `json:"outputFilePath,omitempty"` // output file path for JSON result
+	DownloadURL     string        `json:"downloadUrl"`              // custom download URL for speed test
+	DownloadSize    string        `json:"downloadSize"`             // 10mb, 100mb, or custom
+}
+
+type CMDOptions struct {
+	Timeout      int
+	Concurrency  int
+	Output       string // json, text, pic, none
+	OutputFile   string // output file path for JSON result
+	DownloadURL  string
+	DownloadSize string
+	Mode         string // pingonly, speedonly, all
 }
 
 type JSONOutput struct {
@@ -358,29 +333,6 @@ func parseMessage(message []byte) ([]string, *ProfileTestOptions, error) {
 		return nil, nil, err
 	}
 	return links, options, nil
-}
-
-func parseRetestMessage(message []byte) ([]string, *ProfileTestOptions, error) {
-	options := &ProfileTestOptions{}
-	err := json.Unmarshal(message, options)
-	if err != nil {
-		return nil, nil, err
-	}
-	if options.TestMode != RETEST {
-		return nil, nil, errors.New("not retest mode")
-	}
-	options.TestMode = RETEST
-	options.Timeout = time.Duration(int(options.Timeout)) * time.Second
-	if options.GroupName == "?empty?" || options.GroupName == "" {
-		options.GroupName = "Default"
-	}
-	if options.Timeout < 20 {
-		options.Timeout = 20
-	}
-	if options.Concurrency < 1 {
-		options.Concurrency = 1
-	}
-	return options.Links, options, nil
 }
 
 type MessageWriter interface {
@@ -578,7 +530,7 @@ func (p *ProfileTest) saveJSON(nodes render.Nodes, traffic int64, duration strin
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile("output.json", data, 0644)
+	return os.WriteFile("output.json", data, 0644)
 }
 
 func (p *ProfileTest) saveText(nodes render.Nodes) error {
@@ -589,7 +541,7 @@ func (p *ProfileTest) saveText(nodes render.Nodes) error {
 		}
 	}
 	data := []byte(strings.Join(links, "\n"))
-	return ioutil.WriteFile("output.txt", data, 0644)
+	return os.WriteFile("output.txt", data, 0644)
 }
 
 func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeChan chan<- render.Node, trafficChan chan<- int64) error {
@@ -674,8 +626,8 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 		}
 		nodeChan <- node
 	}(ch, startCh)
-	speed, err := download.Download(link, p.Options.Timeout, p.Options.Timeout, ch, startCh)
-	// speed, err := download.DownloadRange(link, 2, p.Options.Timeout, p.Options.Timeout, ch, startCh)
+	downloadURL := download.GetDownloadURL(p.Options.DownloadSize, p.Options.DownloadURL)
+	speed, err := download.DownloadWithURL(link, p.Options.Timeout, p.Options.Timeout, ch, startCh, downloadURL)
 	if speed < 1 {
 		p.WriteMessage(getMsgByte(index, "gotspeed", -1, -1, 0))
 	}
@@ -713,14 +665,6 @@ func FormatDuration(duration time.Duration) string {
 		return fmt.Sprintf("%dh %dm %ds", h, m, s)
 	}
 	return fmt.Sprintf("%dm %ds", m, s)
-}
-
-func png2base64(path string) (string, error) {
-	bytes, err := ioutil.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(bytes), nil
 }
 
 func isYamlFile(filePath string) bool {

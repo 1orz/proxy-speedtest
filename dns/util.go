@@ -6,7 +6,7 @@ import (
 	"time"
 
 	D "github.com/miekg/dns"
-	"github.com/xxf098/lite-proxy/common/cache"
+	"github.com/1orz/proxy-speedtest/common/cache"
 )
 
 func putMsgToCache(c *cache.LruCache, key string, msg *D.Msg) {

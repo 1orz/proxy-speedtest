@@ -5,14 +5,14 @@ import (
 	"io"
 	"log"
 
-	pb "github.com/xxf098/lite-proxy/api/rpc/lite"
-	"github.com/xxf098/lite-proxy/download"
+	pb "github.com/1orz/proxy-speedtest/api/rpc/lite"
+	"github.com/1orz/proxy-speedtest/download"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 func StartClient(addr string, req *pb.TestRequest) ([]*pb.TestReply, error) {
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}

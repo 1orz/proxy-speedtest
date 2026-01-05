@@ -23,7 +23,6 @@ func init() {
 type Manager struct {
 	access   sync.RWMutex
 	counters map[string]*Counter
-	running  bool
 }
 
 // NewManager creates an instance of Statistics Manager.
@@ -52,11 +51,7 @@ func (m *Manager) RegisterCounter(name string) (*Counter, error) {
 func (m *Manager) UnregisterCounter(name string) error {
 	m.access.Lock()
 	defer m.access.Unlock()
-
-	if _, found := m.counters[name]; found {
-		// newError("remove counter ", name).AtDebug().WriteToLog()
 		delete(m.counters, name)
-	}
 	return nil
 }
 

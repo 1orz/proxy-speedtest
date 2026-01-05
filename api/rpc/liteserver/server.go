@@ -6,8 +6,8 @@ import (
 	"net"
 	"time"
 
-	pb "github.com/xxf098/lite-proxy/api/rpc/lite"
-	"github.com/xxf098/lite-proxy/web"
+	pb "github.com/1orz/proxy-speedtest/api/rpc/lite"
+	"github.com/1orz/proxy-speedtest/web"
 	"google.golang.org/grpc"
 )
 
@@ -40,12 +40,15 @@ func (s *server) StartTest(req *pb.TestRequest, stream pb.TestProxy_StartTestSer
 	} else if req.SpeedTestMode == pb.SpeedTestMode_speedonly {
 		speedTestMode = "speedonly"
 	}
-	sortMethod := "none"
-	if req.SortMethod == pb.SortMethod_ping {
+	sortMethod := "speed"
+	switch req.SortMethod {
+	case pb.SortMethod_speed:
+		sortMethod = "speed"
+	case pb.SortMethod_rspeed:
+		sortMethod = "rspeed"
+	case pb.SortMethod_ping:
 		sortMethod = "ping"
-	} else if req.SortMethod == pb.SortMethod_rping {
-		sortMethod = "rping"
-	} else if req.SortMethod == pb.SortMethod_rping {
+	case pb.SortMethod_rping:
 		sortMethod = "rping"
 	}
 	// config
@@ -67,6 +70,9 @@ func (s *server) StartTest(req *pb.TestRequest, stream pb.TestProxy_StartTestSer
 	}
 
 	nodeChan, err := p.TestAll(stream.Context(), nil)
+	if err != nil {
+		return err
+	}
 	count := 0
 	linkCount := len(links)
 	for count < linkCount {

@@ -29,6 +29,7 @@ func TestDefaultTable(t *testing.T) {
 }
 
 func TestCSV2Nodes(t *testing.T) {
+	t.Skip("Skipping test that requires external CSV file")
 	nodes, err := CSV2Nodes("/home/arch/Downloads/test.csv")
 	if err != nil {
 		t.Error(err)

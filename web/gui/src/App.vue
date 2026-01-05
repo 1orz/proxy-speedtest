@@ -283,11 +283,7 @@
 import "ag-grid-community/dist/styles/ag-grid.css";
 import "ag-grid-community/dist/styles/ag-theme-alpine.css";
 import { AgGridVue } from 'ag-grid-vue3';
-
-const go = new Go();
-    WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((result) => {
-      go.run(result.instance);
-});
+import QRCode from 'qrcode';
 
 let themes = {
     "original": {
@@ -686,18 +682,19 @@ export default {
         },
         handleQRCodeCreate: function () {
             this.$nextTick(() => {
-                const items = this.multipleSelection.map(item => {
-                    return {
-                        gid: 'qrcode_' + item.id,
-                        link: item.link,
-                        size: 260
+                this.multipleSelection.forEach(item => {
+                    const elem = document.getElementById('qrcode_' + item.id);
+                    if (elem) {
+                        elem.setAttribute('title', item.link);
+                        QRCode.toDataURL(item.link, { width: 260, margin: 1 })
+                            .then(url => {
+                                elem.innerHTML = `<img style="display: block;" src="${url}">`;
+                            })
+                            .catch(err => {
+                                console.error('QRCode generation failed:', err);
+                            });
                     }
-                })
-                wasmQRcode(JSON.stringify(items))
-                // this.multipleSelection.forEach(item => {
-                // 	const gid = 'qrcode_' + item.id;
-                // 	wasmQRcode(gid, item.link, 260, 260)
-                // })
+                });
             })
         },
         handleRetest: function () {

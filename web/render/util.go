@@ -5,7 +5,6 @@ import (
 	"image"
 	"image/draw"
 	"image/jpeg"
-	_ "image/jpeg"
 	"image/png"
 	"math"
 	"os"
@@ -105,7 +104,7 @@ func parseHexColor(x string) (r, g, b, a int) {
 }
 
 func fixp(x, y float64) fixed.Point26_6 {
-	return fixed.Point26_6{fix(x), fix(y)}
+	return fixed.Point26_6{X: fix(x), Y: fix(y)}
 }
 
 func fix(x float64) fixed.Int26_6 {
@@ -146,7 +145,7 @@ func LoadFontFace(path string, points float64) (font.Face, error) {
 }
 
 func LoadFontFaceByBytes(fontBytes []byte, fontPath string, points float64) (font.Face, error) {
-	if fontBytes == nil || len(fontBytes) < 1 {
+	if len(fontBytes) < 1 {
 		return LoadFontFace(fontPath, points)
 	}
 	f, err := truetype.Parse(fontBytes)

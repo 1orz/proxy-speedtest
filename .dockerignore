@@ -1,0 +1,67 @@
+# Git
+.git
+.gitignore
+.github
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Build artifacts
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+proxy-speedtest
+speedtest
+lite
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Dependencies (will be downloaded in Docker)
+vendor/
+node_modules/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.docker
+
+# Documentation
+*.md
+LICENSE
+docs/
+
+# Config files (don't include local configs)
+config.json
+output.json
+*.local.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Cache
+.cache
+__pycache__/
+*.pyc
+

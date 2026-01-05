@@ -4,15 +4,14 @@ import (
 	"context"
 	"net"
 	"os"
-	"reflect"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"unsafe"
 
-	"github.com/xxf098/lite-proxy/common"
-	"github.com/xxf098/lite-proxy/log"
+	"github.com/1orz/proxy-speedtest/common"
+	"github.com/1orz/proxy-speedtest/log"
 )
 
 func CheckLink(link string) ([]string, error) {
@@ -69,6 +68,7 @@ func IsUrl(message string) bool {
 func IsFilePath(message string) bool {
 	if len(message) < 1024 &&
 		!strings.HasPrefix(message, "vmess://") &&
+		!strings.HasPrefix(message, "vless://") &&
 		!strings.HasPrefix(message, "trojan://") &&
 		!strings.HasPrefix(message, "ssr://") &&
 		!strings.HasPrefix(message, "ss://") {
@@ -79,5 +79,5 @@ func IsFilePath(message string) bool {
 }
 
 func UnsafeGetBytes(s string) []byte {
-	return unsafe.Slice((*byte)(unsafe.Pointer((*reflect.StringHeader)(unsafe.Pointer(&s)).Data)), len(s))
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }

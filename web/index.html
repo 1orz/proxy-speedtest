@@ -17,9 +17,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/element-plus/2.2.25/index.full.js"></script>
 <!-- <script src="https://cdn.jsdelivr.net/npm/@element-plus/icons-vue"></script> -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/element-plus-icons-vue/2.0.10/global.iife.js"></script>
-<!-- qrcode -->
-<!-- <script src="https://cdn.jsdelivr.net/npm/qrcodejs2@0.0.2/qrcode.min.js"></script> -->
-<script src="wasm_exec.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 
 
 <body>
@@ -303,12 +301,6 @@
 		</el-dialog>
 	</div>
 	<script>
-
-		const go = new Go();
-		WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((result) => {
-			go.run(result.instance);
-		});
-
 		let themes = {
 			"original": {
 				colorgroup: [
@@ -615,18 +607,19 @@
 				},
 				handleQRCodeCreate: function () {
 					this.$nextTick(() => {
-						const items = this.multipleSelection.map(item => {
-							return {
-								gid: 'qrcode_' + item.id,
-								link: item.link,
-								size: 260
+						this.multipleSelection.forEach(item => {
+							const elem = document.getElementById('qrcode_' + item.id);
+							if (elem) {
+								elem.setAttribute('title', item.link);
+								QRCode.toDataURL(item.link, { width: 260, margin: 1 })
+									.then(url => {
+										elem.innerHTML = `<img style="display: block;" src="${url}">`;
+									})
+									.catch(err => {
+										console.error('QRCode generation failed:', err);
+									});
 							}
-						})
-						wasmQRcode(JSON.stringify(items))
-						// this.multipleSelection.forEach(item => {
-						// 	const gid = 'qrcode_' + item.id;
-						// 	wasmQRcode(gid, item.link, 260, 260)
-						// })
+						});
 					})
 				},
 				handleRetest: function () {

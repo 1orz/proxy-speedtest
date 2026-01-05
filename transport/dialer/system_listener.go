@@ -5,8 +5,8 @@ import (
 	"net"
 	"syscall"
 
-	"github.com/xxf098/lite-proxy/common"
-	"github.com/xxf098/lite-proxy/log"
+	"github.com/1orz/proxy-speedtest/common"
+	"github.com/1orz/proxy-speedtest/log"
 )
 
 var (
@@ -20,8 +20,9 @@ type DefaultListener struct {
 func getControlFunc(ctx context.Context, controllers []controller) func(network, address string, c syscall.RawConn) error {
 	return func(network, address string, c syscall.RawConn) error {
 		return c.Control(func(fd uintptr) {
-
-			setReusePort(fd) // nolint: staticcheck
+			if err := setReusePort(fd); err != nil {
+				log.E("failed to set SO_REUSEPORT")
+			}
 
 			for _, controller := range controllers {
 				if err := controller(network, address, fd); err != nil {

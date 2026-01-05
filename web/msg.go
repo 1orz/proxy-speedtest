@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xxf098/lite-proxy/config"
-	"github.com/xxf098/lite-proxy/download"
+	"github.com/1orz/proxy-speedtest/config"
+	"github.com/1orz/proxy-speedtest/download"
 )
 
 const (
@@ -42,23 +42,6 @@ func GetRemarks(link string) (string, string, error) {
 		return "", "", err
 	}
 	return cfg.Protocol, cfg.Remarks, err
-}
-
-func gotserverMsg(id int, link string, groupName string) []byte {
-	msg := Message{ID: id, Info: "gotserver"}
-	cfg, err := config.Link2Config(link)
-	if err == nil {
-		msg.Group = groupName
-		msg.Remarks = cfg.Remarks
-		msg.Server = net.JoinHostPort(cfg.Server, strconv.Itoa(cfg.Port))
-		msg.Protocol = cfg.Protocol
-		if cfg.Protocol == "vmess" && cfg.Net != "" {
-			msg.Protocol = fmt.Sprintf("%s/%s", cfg.Protocol, cfg.Net)
-		}
-		msg.Link = link
-	}
-	b, _ := json.Marshal(msg)
-	return b
 }
 
 func gotserversMsg(startID int, links []string, groupName string) []byte {

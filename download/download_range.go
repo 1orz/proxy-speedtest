@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xxf098/lite-proxy/common/pool"
+	"github.com/1orz/proxy-speedtest/common/pool"
 )
 
 var (
@@ -16,25 +16,25 @@ var (
 )
 
 func DownloadRange(ctx context.Context, link string, part int, timeout time.Duration, handshakeTimeout time.Duration, resultChan chan<- int64, startChan chan<- time.Time) (int64, error) {
-	client, err := createClient(ctx, link)
+	dialer, err := createDialer(link)
 	if err != nil {
 		return 0, err
 	}
+	defer dialer.Close()
 
 	option := DownloadOption{
 		DownloadTimeout:  timeout,
 		HandshakeTimeout: handshakeTimeout,
-		URL:              downloadLink,
+		URL:              DownloadLinkDefault,
 		Ranges:           calcRange(int64(part), int64(contentLength), link),
 	}
-	return downloadRangeInternal(ctx, option, resultChan, startChan, client.Dial)
+	return downloadRangeInternal(ctx, option, resultChan, startChan, dialer.DialContext)
 }
 
-func downloadRangeInternal(ctx context.Context, option DownloadOption, resultChan chan<- int64, startOuterChan chan<- time.Time, dial func(network, addr string) (net.Conn, error)) (int64, error) {
+func downloadRangeInternal(ctx context.Context, option DownloadOption, resultChan chan<- int64, startOuterChan chan<- time.Time, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) (int64, error) {
 	var max int64 = 0
 	var wg sync.WaitGroup
 	totalCh := make(chan int64)
-	// remove
 	errorCh := make(chan error)
 	startCh := make(chan time.Time, 1)
 	for _, rng := range option.Ranges {
@@ -44,8 +44,8 @@ func downloadRangeInternal(ctx context.Context, option DownloadOption, resultCha
 			var max int64 = 0
 			httpTransport := &http.Transport{}
 			httpClient := &http.Client{Transport: httpTransport, Timeout: option.HandshakeTimeout}
-			if dial != nil {
-				httpTransport.Dial = dial
+			if dialContext != nil {
+				httpTransport.DialContext = dialContext
 			}
 			req, err := http.NewRequest("GET", option.URL, nil)
 			if err != nil {
@@ -92,8 +92,7 @@ func downloadRangeInternal(ctx context.Context, option DownloadOption, resultCha
 					}
 					if er != nil {
 						if er != io.EOF {
-							errorChan <- err
-							err = er
+							errorChan <- er
 						}
 						break Loop
 					}

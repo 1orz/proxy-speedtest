@@ -7,22 +7,15 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
-	"strings"
 	"time"
 
-	"github.com/xxf098/lite-proxy/common"
-	"github.com/xxf098/lite-proxy/config"
-	C "github.com/xxf098/lite-proxy/constant"
-	"github.com/xxf098/lite-proxy/dns"
-	"github.com/xxf098/lite-proxy/outbound"
-	"github.com/xxf098/lite-proxy/transport/resolver"
-	"github.com/xxf098/lite-proxy/utils"
+	"github.com/1orz/proxy-speedtest/internal/parser"
+	"github.com/1orz/proxy-speedtest/internal/xray"
+	"github.com/1orz/proxy-speedtest/utils"
 )
 
 const (
-	remoteHost   = "clients3.google.com"
-	generate_204 = "http://clients3.google.com/generate_204"
+	remoteHost = "clients3.google.com"
 )
 
 var (
@@ -30,162 +23,48 @@ var (
 	tcpTimeout  = 2200 * time.Millisecond
 )
 
-type PingOption struct {
-	Attempts int
-	TimeOut  time.Duration
+func SetDNS(nameserver string) error {
+	// DNS setting is now handled by xray-core
+	return nil
 }
 
-func PingVmess(vmessOption *outbound.VmessOption) (int64, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), tcpTimeout)
-	defer cancel()
-	vmess, err := outbound.NewVmess(vmessOption)
-	if err != nil {
+// pingOnce performs a single HTTP request and returns the response time
+func pingOnce(remoteConn net.Conn) (int64, error) {
+	start := time.Now()
+	if _, err := remoteConn.Write(httpRequest); err != nil {
 		return 0, err
 	}
-	meta := &C.Metadata{
-		NetWork: 0,
-		Type:    0,
-		SrcPort: "",
-		DstPort: "80",
-		Host:    remoteHost,
-	}
-	remoteConn, err := vmess.DialContext(ctx, meta)
-	if err != nil {
+	buf := make([]byte, 128)
+	if n, err := remoteConn.Read(buf); err != nil && err != io.EOF {
 		return 0, err
-	}
-	return pingInternal(remoteConn)
-}
-
-func parseFirstLine(buf []byte) (int, error) {
-	bNext := buf
-	var b []byte
-	var err error
-	for len(b) == 0 {
-		if b, bNext, err = nextLine(bNext); err != nil {
-			return 0, err
+	} else if n < 10 {
+		return 0, errors.New("read data not enough")
+	} else {
+		if !bytes.Contains(buf[:n], []byte("HTTP/1.1 204")) && !bytes.Contains(buf[:n], []byte("200")) {
+			return 0, fmt.Errorf("unexpected response: %s", string(buf[:n]))
 		}
 	}
-
-	// parse protocol
-	n := bytes.IndexByte(b, ' ')
-	if n < 0 {
-		return 0, fmt.Errorf("cannot find whitespace in the first line of response %q", buf)
-	}
-	b = b[n+1:]
-
-	// parse status code
-	statusCode, n, err := parseUintBuf(b)
-	if err != nil {
-		return 0, fmt.Errorf("cannot parse response status code: %s. Response %q", err, buf)
-	}
-	if len(b) > n && b[n] != ' ' {
-		return 0, fmt.Errorf("unexpected char at the end of status code. Response %q", buf)
-	}
-
-	if statusCode == 204 || statusCode == 200 {
-		return len(buf) - len(bNext), nil
-	}
-	return 0, errors.New("Wrong Status Code")
+	elapse := time.Since(start)
+	return elapse.Milliseconds(), nil
 }
 
-func nextLine(b []byte) ([]byte, []byte, error) {
-	nNext := bytes.IndexByte(b, '\n')
-	if nNext < 0 {
-		return nil, nil, errors.New("need more data: cannot find trailing lf")
+// pingInternal performs delay test with warm-up to eliminate first handshake latency
+// Reference: https://github.com/clash-verge-rev/clash-verge-rev
+// The first request includes DNS resolution, TCP handshake, and TLS handshake overhead.
+// By doing a warm-up request first, the second request measures only the actual proxy latency.
+func pingInternal(remoteConn net.Conn) (int64, error) {
+	if remoteConn == nil {
+		return 0, errors.New("connection is nil")
 	}
-	n := nNext
-	if n > 0 && b[n-1] == '\r' {
-		n--
-	}
-	return b[:n], b[nNext+1:], nil
-}
 
-func parseUintBuf(b []byte) (int, int, error) {
-	n := len(b)
-	if n == 0 {
-		return -1, 0, errors.New("empty integer")
+	// Warm-up request: eliminate first handshake latency (DNS, TCP, TLS)
+	_, err := pingOnce(remoteConn)
+	if err != nil {
+		return 0, err
 	}
-	v := 0
-	for i := 0; i < n; i++ {
-		c := b[i]
-		k := c - '0'
-		if k > 9 {
-			if i == 0 {
-				return -1, i, errors.New("unexpected first char found. Expecting 0-9")
-			}
-			return v, i, nil
-		}
-		vNew := 10*v + int(k)
-		// Test for overflow.
-		if vNew < v {
-			return -1, i, errors.New("too long int")
-		}
-		v = vNew
-	}
-	return v, n, nil
-}
 
-func PingTrojan(trojanOption *outbound.TrojanOption) (int64, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), tcpTimeout)
-	defer cancel()
-	trojan, err := outbound.NewTrojan(trojanOption)
-	if err != nil {
-		return 0, err
-	}
-	meta := &C.Metadata{
-		NetWork: 0,
-		Type:    0,
-		SrcPort: "",
-		DstPort: "80",
-		Host:    remoteHost,
-	}
-	remoteConn, err := trojan.DialContext(ctx, meta)
-	if err != nil {
-		return 0, err
-	}
-	return pingInternal(remoteConn)
-}
-
-func PingSS(ssOption *outbound.ShadowSocksOption) (int64, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), tcpTimeout)
-	defer cancel()
-	ss, err := outbound.NewShadowSocks(ssOption)
-	if err != nil {
-		return 0, err
-	}
-	meta := &C.Metadata{
-		NetWork: 0,
-		Type:    0,
-		SrcPort: "",
-		DstPort: "80",
-		Host:    remoteHost,
-	}
-	remoteConn, err := ss.DialContext(ctx, meta)
-	if err != nil {
-		return 0, err
-	}
-	return pingInternal(remoteConn)
-}
-
-func PingSSR(ssrOption *outbound.ShadowSocksROption) (int64, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), tcpTimeout)
-	defer cancel()
-	ssr, err := outbound.NewShadowSocksR(ssrOption)
-	if err != nil {
-		return 0, err
-	}
-	meta := &C.Metadata{
-		NetWork: 0,
-		Type:    0,
-		SrcPort: "",
-		DstPort: "80",
-		Host:    remoteHost,
-	}
-	remoteConn, err := ssr.DialContext(ctx, meta)
-	if err != nil {
-		return 0, err
-	}
-	return pingInternal(remoteConn)
+	// Actual delay measurement (connection already established)
+	return pingOnce(remoteConn)
 }
 
 type PingResult struct {
@@ -202,168 +81,89 @@ func PingLink(link string, attempts int) (int64, error) {
 }
 
 func PingLinkInternal(link string, pingOption PingOption) (int64, error) {
-	matches, err := utils.CheckLink(link)
+	_, err := utils.CheckLink(link)
 	if err != nil {
 		return 0, err
 	}
-	var option interface{}
-	switch strings.ToLower(matches[1]) {
-	case "vmess":
-		option, err = config.VmessLinkToVmessOption(link)
-	case "trojan":
-		option, err = config.TrojanLinkToTrojanOption(link)
-	case "http":
-		option, err = config.HttpLinkToHttpOption(link)
-	case "ss":
-		option, err = config.SSLinkToSSOption(link)
-	case "ssr":
-		option, err = config.SSRLinkToSSROption(link)
-	default:
-		return 0, common.NewError("Not Suported Link")
-	}
+
+	// Parse link using the new unified parser
+	config, err := parser.ParseLink(link)
 	if err != nil {
 		return 0, err
 	}
+
+	timeout := pingOption.TimeOut
+	if timeout <= 0 {
+		timeout = tcpTimeout
+	}
+
 	var elapse int64
-	if pingOption.TimeOut > 0 {
-		tcpTimeout = pingOption.TimeOut
-	}
 	err = utils.ExponentialBackoff(pingOption.Attempts, 100).On(func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), tcpTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		pingChan := make(chan PingResult, 1)
 		go func(pingChan chan<- PingResult) {
-			start := time.Now()
-			elp, err := Ping(option)
-			elapse := time.Since(start)
-			if elapse > 2000*time.Second {
-				elp = 0
-			}
+			elp, err := PingConfig(ctx, config)
 			pingResult := PingResult{elapse: elp, err: err}
 			pingChan <- pingResult
 		}(pingChan)
 		for {
 			select {
 			case pingResult := <-pingChan:
-				{
-					elapse = pingResult.elapse
-					return pingResult.err
-				}
+				elapse = pingResult.elapse
+				return pingResult.err
 			case <-ctx.Done():
 				return fmt.Errorf("ping time out")
 			}
 		}
-
 	})
 	return elapse, err
 }
 
-func PingContext(ctx context.Context, option interface{}) (int64, error) {
-	var d outbound.ContextDialer
-	var err error
-	meta := &C.Metadata{
-		NetWork: 0,
-		Type:    C.TEST,
-		SrcPort: "",
-		DstPort: "80",
-		Host:    remoteHost,
-		Timeout: tcpTimeout,
-	}
-	if ssOption, ok := option.(*outbound.ShadowSocksOption); ok {
-		d, err = outbound.NewShadowSocks(ssOption)
-		if err != nil {
-			return 0, err
-		}
-	}
-	if ssrOption, ok := option.(*outbound.ShadowSocksROption); ok {
-		d, err = outbound.NewShadowSocksR(ssrOption)
-		if err != nil {
-			return 0, err
-		}
-		dialerCtx := func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return d.DialContext(ctx, meta)
-		}
-		return pingHTTPClient(ctx, generate_204, tcpTimeout, dialerCtx)
-	}
-	if vmessOption, ok := option.(*outbound.VmessOption); ok {
-		d, err = outbound.NewVmess(vmessOption)
-		if err != nil {
-			return 0, err
-		}
-	}
-	if trojanOption, ok := option.(*outbound.TrojanOption); ok {
-		d, err = outbound.NewTrojan(trojanOption)
-		if err != nil {
-			return 0, err
-		}
-	}
-	if httpOption, ok := option.(*outbound.HttpOption); ok {
-		d = outbound.NewHttp(*httpOption)
-	}
-	if d == nil {
-		return 0, errors.New("not support config")
-	}
-	remoteConn, err := d.DialContext(ctx, meta)
+// PingConfig performs ping test on a ProxyConfig
+func PingConfig(ctx context.Context, config *xray.ProxyConfig) (int64, error) {
+	// Create dialer using xray-core
+	dialer, err := xray.NewDialer(config)
 	if err != nil {
+		fmt.Printf("[DEBUG] NewDialer error for %s: %v\n", config.Tag, err)
 		return 0, err
 	}
-	return pingInternal(remoteConn)
+	defer dialer.Close()
+
+	// Dial connection
+	remoteConn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(remoteHost, "80"))
+	if err != nil {
+		fmt.Printf("[DEBUG] DialContext error for %s: %v\n", config.Tag, err)
+		return 0, err
+	}
+	defer remoteConn.Close()
+
+	latency, err := pingInternal(remoteConn)
+	if err != nil {
+		fmt.Printf("[DEBUG] pingInternal error for %s: %v\n", config.Tag, err)
+	}
+	return latency, err
 }
 
+// Ping is deprecated, use PingConfig instead
 func Ping(option interface{}) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tcpTimeout)
 	defer cancel()
-	return PingContext(ctx, option)
+
+	// Try to convert to xray.ProxyConfig
+	if config, ok := option.(*xray.ProxyConfig); ok {
+		return PingConfig(ctx, config)
+	}
+
+	return 0, errors.New("unsupported config type, use xray.ProxyConfig")
 }
 
-func pingHTTPClient(ctx context.Context, url string, timeout time.Duration, dialCtx func(ctx context.Context, network, addr string) (net.Conn, error)) (int64, error) {
-	httpTransport := &http.Transport{}
-	httpClient := &http.Client{Transport: httpTransport, Timeout: timeout}
-	if dialCtx != nil {
-		httpTransport.DialContext = dialCtx
-	}
-	defer httpClient.CloseIdleConnections()
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return 0, err
-	}
-	start := time.Now()
-	response, err := httpClient.Do(req)
-	now := time.Now()
-	if err != nil {
-		return 0, err
-	}
-	elapse := now.Sub(start).Milliseconds()
-	defer response.Body.Close()
-	if response.StatusCode != 204 && response.StatusCode != 200 {
-		return 0, fmt.Errorf("wrong status code %d", response.StatusCode)
-	}
-	return elapse, nil
+type PingOption struct {
+	Attempts int
+	TimeOut  time.Duration
 }
 
-func pingInternal(remoteConn net.Conn) (int64, error) {
-	defer remoteConn.Close()
-	remoteConn.SetDeadline(time.Now().Add(tcpTimeout))
-	start := time.Now()
-	// httpRequest := "GET /generate_204 HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.121 Safari/537.36\r\n\r\n"
-	if _, err := remoteConn.Write(httpRequest); err != nil {
-		return 0, err
-	}
-	buf := make([]byte, 128)
-	_, err := remoteConn.Read(buf)
-	if err != nil && err != io.EOF {
-		return 0, err
-	}
-	_, err = parseFirstLine(buf)
-	if err != nil {
-		return 0, err
-	}
-	elapsed := time.Since(start).Milliseconds()
-	// fmt.Print(string(buf))
-	// fmt.Printf("server: %s port: %d elapsed: %d\n", vmessOption.Server, vmessOption.Port, elapsed)
-	return elapsed, nil
-}
-
-func init() {
-	resolver.DefaultResolver = dns.DefaultResolver()
+type PingDelayOption struct {
+	PingOption
+	URL string
 }

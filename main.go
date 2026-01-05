@@ -5,25 +5,31 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 	"runtime"
 	"strings"
-	"syscall"
 
-	grpcServer "github.com/xxf098/lite-proxy/api/rpc/liteserver"
-	C "github.com/xxf098/lite-proxy/constant"
-	"github.com/xxf098/lite-proxy/core"
-	"github.com/xxf098/lite-proxy/utils"
-	webServer "github.com/xxf098/lite-proxy/web"
+	grpcServer "github.com/1orz/proxy-speedtest/api/rpc/liteserver"
+	C "github.com/1orz/proxy-speedtest/constant"
+	"github.com/1orz/proxy-speedtest/utils"
+	webServer "github.com/1orz/proxy-speedtest/web"
+
+	// Register xray protocols
+	_ "github.com/1orz/proxy-speedtest/internal/xray"
 )
 
 var (
-	port    = flag.Int("p", 8090, "set port")
-	test    = flag.String("test", "", "test from command line with subscription link or file")
-	conf    = flag.String("config", "", "command line options")
-	ping    = flag.Int("ping", 2, "retry times to ping link on startup")
-	grpc    = flag.Bool("grpc", false, "start grpc server")
-	version = flag.Bool("v", false, "show current version of clash")
+	port         = flag.Int("p", 8090, "set port")
+	test         = flag.String("test", "", "test from command line with subscription link or file")
+	conf         = flag.String("config", "", "config file path (JSON format)")
+	grpc         = flag.Bool("grpc", false, "start grpc server")
+	version      = flag.Bool("v", false, "show current version")
+	timeout      = flag.Int("timeout", 16, "timeout for each node test in seconds")
+	concurrency  = flag.Int("concurrency", 2, "number of concurrent tests")
+	output       = flag.String("output", "json", "output format: json, text, pic, none")
+	outputFile   = flag.String("output-file", "", "output file path for JSON result")
+	downloadURL  = flag.String("download-url", "", "custom download URL for speed test")
+	downloadSize = flag.String("download-size", "", "download size: 10mb, 100mb, or custom URL bytes param")
+	mode         = flag.String("mode", "all", "test mode: pingonly, speedonly, all")
 )
 
 func main() {
@@ -42,44 +48,54 @@ func main() {
 			break
 		}
 	}
+
+	// Test from command line
 	if *test != "" {
-		if err := webServer.TestFromCMD(*test, conf); err != nil {
+		cmdOpts := &webServer.CMDOptions{
+			Timeout:      *timeout,
+			Concurrency:  *concurrency,
+			Output:       *output,
+			OutputFile:   *outputFile,
+			DownloadURL:  *downloadURL,
+			DownloadSize: *downloadSize,
+			Mode:         *mode,
+		}
+		if err := webServer.TestFromCMD(*test, conf, cmdOpts); err != nil {
 			log.Fatal(err)
 		}
 		return
 	}
-	// start grpc server
+
+	// Start gRPC server
 	if *grpc {
 		if err := grpcServer.StartServer(uint16(*port)); err != nil {
 			log.Fatalln(err)
 		}
 		return
 	}
-	if link == "" {
-		if len(os.Args) < 2 {
-			*port = 10888
+
+	// Test a single link directly (if provided as argument)
+	if link != "" {
+		cmdOpts := &webServer.CMDOptions{
+			Timeout:      *timeout,
+			Concurrency:  *concurrency,
+			Output:       *output,
+			OutputFile:   *outputFile,
+			DownloadURL:  *downloadURL,
+			DownloadSize: *downloadSize,
+			Mode:         *mode,
 		}
-		if err := webServer.ServeFile(*port); err != nil {
-			log.Fatalln(err)
+		if err := webServer.TestFromCMD(link, conf, cmdOpts); err != nil {
+			log.Fatal(err)
 		}
 		return
 	}
-	c := core.Config{
-		LocalHost: "0.0.0.0",
-		LocalPort: *port,
-		Link:      link,
-		Ping:      *ping,
+
+	// Start web server
+	if len(os.Args) < 2 {
+		*port = 10888
 	}
-	p, err := core.StartInstance(c)
-	if err != nil {
+	if err := webServer.ServeFile(*port); err != nil {
 		log.Fatalln(err)
 	}
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigs)
-	go func() {
-		<-sigs
-		p.Close()
-	}()
-	p.Run()
 }

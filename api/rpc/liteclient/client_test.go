@@ -2,13 +2,15 @@ package liteclient
 
 import (
 	"testing"
+	"time"
 
-	pb "github.com/xxf098/lite-proxy/api/rpc/lite"
-	s "github.com/xxf098/lite-proxy/api/rpc/liteserver"
+	pb "github.com/1orz/proxy-speedtest/api/rpc/lite"
+	s "github.com/1orz/proxy-speedtest/api/rpc/liteserver"
 )
 
 func TestStartClient(t *testing.T) {
 	go s.StartServer(10999)
+	time.Sleep(100 * time.Millisecond) // 等待服务器启动
 	req := pb.TestRequest{
 		GroupName:     "Default",
 		SpeedTestMode: pb.SpeedTestMode_all,

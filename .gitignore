@@ -1,4 +1,13 @@
 ./lite
+proxy-speedtest
 web/main.wasm
 web/render/*.png
 .vscode/
+
+# 测试输出文件
+*.json
+!config.json
+!package.json
+!package-lock.json
+!pnpm-lock.yaml
+out.png

@@ -3,27 +3,42 @@ package download
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
-	"errors"
-
-	"github.com/xxf098/lite-proxy/common/pool"
-	"github.com/xxf098/lite-proxy/outbound"
-	"github.com/xxf098/lite-proxy/proxy"
-	"github.com/xxf098/lite-proxy/stats"
-	"github.com/xxf098/lite-proxy/utils"
+	"github.com/1orz/proxy-speedtest/common/pool"
+	"github.com/1orz/proxy-speedtest/internal/parser"
+	"github.com/1orz/proxy-speedtest/internal/xray"
+	"github.com/1orz/proxy-speedtest/stats"
 )
 
 const (
-	downloadLink      = "https://download.microsoft.com/download/2/0/E/20E90413-712F-438C-988E-FDAA79A8AC3D/dotnetfx35.exe"
-	cloudflareLink100 = "https://speed.cloudflare.com/__down?bytes=100000000"
-	cachefly10        = "http://cachefly.cachefly.net/10mb.test"
-	cachefly100       = "http://cachefly.cachefly.net/100mb.test"
+	DownloadLinkDefault = "https://download.microsoft.com/download/2/0/E/20E90413-712F-438C-988E-FDAA79A8AC3D/dotnetfx35.exe"
+	CloudflareLink100   = "https://speed.cloudflare.com/__down?bytes=100000000"
+	CloudflareLink10    = "https://speed.cloudflare.com/__down?bytes=10000000"
+	Cachefly10          = "http://cachefly.cachefly.net/10mb.test"
+	Cachefly100         = "http://cachefly.cachefly.net/100mb.test"
 )
+
+func GetDownloadURL(size string, customURL string) string {
+	if customURL != "" {
+		return customURL
+	}
+	switch size {
+	case "10mb":
+		return Cachefly10
+	case "100mb":
+		return Cachefly100
+	case "cloudflare10":
+		return CloudflareLink10
+	case "cloudflare100":
+		return CloudflareLink100
+	default:
+		return DownloadLinkDefault
+	}
+}
 
 type DownloadOption struct {
 	URL              string
@@ -40,7 +55,6 @@ func (e *Discard) Write(p []byte) (n int, err error) {
 	n = len(p)
 	pool.Put(p)
 	e.total.Add(int64(n))
-	// fmt.Printf("==%s\n", ByteCountIEC(int64(n)))
 	return n, nil
 }
 
@@ -67,47 +81,44 @@ func ByteCountIECTrim(b int64) string {
 	return strings.TrimSuffix(result, "/s")
 }
 
-func createClient(ctx context.Context, link string) (*proxy.Client, error) {
-	var d outbound.Dialer
-	matches, err := utils.CheckLink(link)
+// createDialer creates an xray dialer from a proxy link
+func createDialer(link string) (*xray.Dialer, error) {
+	config, err := parser.ParseLink(link)
 	if err != nil {
 		return nil, err
 	}
-	creator, err := outbound.GetDialerCreator(matches[1])
-	if err != nil {
-		return nil, err
-	}
-	d, err = creator(link)
-	if err != nil {
-		return nil, err
-	}
-	if d != nil {
-		return proxy.NewClient(ctx, d), nil
-	}
-
-	return nil, errors.New("not supported link")
+	return xray.NewDialer(config)
 }
 
 func Download(link string, timeout time.Duration, handshakeTimeout time.Duration, resultChan chan<- int64, startChan chan<- time.Time) (int64, error) {
+	return DownloadWithURL(link, timeout, handshakeTimeout, resultChan, startChan, DownloadLinkDefault)
+}
+
+func DownloadWithURL(link string, timeout time.Duration, handshakeTimeout time.Duration, resultChan chan<- int64, startChan chan<- time.Time, downloadURL string) (int64, error) {
 	ctx := context.Background()
-	client, err := createClient(ctx, link)
+	dialer, err := createDialer(link)
 	if err != nil {
 		return 0, err
+	}
+	defer dialer.Close()
+
+	if downloadURL == "" {
+		downloadURL = DownloadLinkDefault
 	}
 	option := DownloadOption{
 		DownloadTimeout:  timeout,
 		HandshakeTimeout: handshakeTimeout,
-		URL:              downloadLink,
+		URL:              downloadURL,
 	}
-	return downloadInternal(ctx, option, resultChan, startChan, client.Dial)
+	return downloadInternal(ctx, option, resultChan, startChan, dialer.DialContext)
 }
 
-func downloadInternal(ctx context.Context, option DownloadOption, resultChan chan<- int64, startOuterChan chan<- time.Time, dial func(network, addr string) (net.Conn, error)) (int64, error) {
+func downloadInternal(ctx context.Context, option DownloadOption, resultChan chan<- int64, startOuterChan chan<- time.Time, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) (int64, error) {
 	var max int64 = 0
 	httpTransport := &http.Transport{}
 	httpClient := &http.Client{Transport: httpTransport, Timeout: option.HandshakeTimeout}
-	if dial != nil {
-		httpTransport.Dial = dial
+	if dialContext != nil {
+		httpTransport.DialContext = dialContext
 	}
 	req, err := http.NewRequest("GET", option.URL, nil)
 	if err != nil {
@@ -126,10 +137,8 @@ func downloadInternal(ctx context.Context, option DownloadOption, resultChan cha
 	buf := pool.Get(20 * 1024)
 	defer pool.Put(buf)
 	for {
-		// buf := pool.Get(20 * 1024)
 		nr, er := response.Body.Read(buf)
 		total += int64(nr)
-		// pool.Put(buf)
 		now := time.Now()
 		if now.Sub(prev) >= time.Second || er != nil {
 			prev = now
@@ -142,9 +151,6 @@ func downloadInternal(ctx context.Context, option DownloadOption, resultChan cha
 			total = 0
 		}
 		if er != nil {
-			if er != io.EOF {
-				err = er
-			}
 			break
 		}
 	}
@@ -153,19 +159,20 @@ func downloadInternal(ctx context.Context, option DownloadOption, resultChan cha
 
 func DownloadComplete(link string, timeout time.Duration, handshakeTimeout time.Duration) (int64, error) {
 	ctx := context.Background()
-	client, err := createClient(ctx, link)
+	dialer, err := createDialer(link)
 	if err != nil {
 		return 0, err
 	}
-	return downloadCompleteInternal(ctx, cachefly100, timeout, handshakeTimeout, client.Dial)
+	defer dialer.Close()
+	return downloadCompleteInternal(ctx, Cachefly100, timeout, handshakeTimeout, dialer.DialContext)
 }
 
-func downloadCompleteInternal(ctx context.Context, url string, timeout time.Duration, handshakeTimeout time.Duration, dial func(network, addr string) (net.Conn, error)) (int64, error) {
+func downloadCompleteInternal(ctx context.Context, url string, timeout time.Duration, handshakeTimeout time.Duration, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) (int64, error) {
 	var max int64 = 0
 	httpTransport := &http.Transport{}
 	httpClient := &http.Client{Transport: httpTransport, Timeout: handshakeTimeout}
-	if dial != nil {
-		httpTransport.Dial = dial
+	if dialContext != nil {
+		httpTransport.DialContext = dialContext
 	}
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -186,9 +193,6 @@ func downloadCompleteInternal(ctx context.Context, url string, timeout time.Dura
 		nr, er := response.Body.Read(buf)
 		total += int64(nr)
 		if er != nil {
-			if er != io.EOF {
-				err = er
-			}
 			break
 		}
 	}

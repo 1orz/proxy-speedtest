@@ -15,12 +15,13 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/xxf098/lite-proxy/config"
-	"github.com/xxf098/lite-proxy/utils"
-	"github.com/xxf098/lite-proxy/web/render"
+	"github.com/1orz/proxy-speedtest/config"
+	"github.com/1orz/proxy-speedtest/utils"
+	"github.com/1orz/proxy-speedtest/web/render"
 )
 
 var upgrader = websocket.Upgrader{}
@@ -39,13 +40,6 @@ func ServeFile(port int) error {
 	err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 	return err
 }
-
-// func ServeWasm(port int) error {
-// 	http.Handle("/", http.FileServer(http.FS(wasmStatic)))
-// 	log.Printf("Start server at http://127.0.0.1:%d", port)
-// 	err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
-// 	return err
-// }
 
 func serverFile(w http.ResponseWriter, r *http.Request) {
 	h := http.FileServer(http.FS(guiStatic))
@@ -131,7 +125,7 @@ func readConfig(configPath string) (*ProfileTestOptions, error) {
 	return options, nil
 }
 
-func TestFromCMD(subscription string, configPath *string) error {
+func TestFromCMD(subscription string, configPath *string, cmdOpts *CMDOptions) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	options := ProfileTestOptions{
@@ -149,13 +143,50 @@ func TestFromCMD(subscription string, configPath *string) error {
 		GeneratePicMode: PIC_PATH,
 		OutputMode:      PIC_PATH,
 	}
-	if configPath != nil {
+	if configPath != nil && *configPath != "" {
 		if opt, err := readConfig(*configPath); err == nil {
 			options = *opt
 			if options.GeneratePicMode != 0 {
 				options.OutputMode = options.GeneratePicMode
 			}
-			// options.GeneratePic = true
+		}
+	}
+	// apply command line options (override config file)
+	if cmdOpts != nil {
+		if cmdOpts.Timeout > 0 {
+			options.Timeout = time.Duration(cmdOpts.Timeout) * time.Second
+		}
+		if cmdOpts.Concurrency > 0 {
+			options.Concurrency = cmdOpts.Concurrency
+		}
+		if cmdOpts.DownloadURL != "" {
+			options.DownloadURL = cmdOpts.DownloadURL
+		}
+		if cmdOpts.DownloadSize != "" {
+			options.DownloadSize = cmdOpts.DownloadSize
+		}
+		// test mode: pingonly, speedonly, all
+		switch cmdOpts.Mode {
+		case "pingonly":
+			options.SpeedTestMode = PingOnly
+		case "speedonly":
+			options.SpeedTestMode = SpeedOnly
+		default:
+			options.SpeedTestMode = "all"
+		}
+		switch cmdOpts.Output {
+		case "json":
+			options.OutputMode = JSON_OUTPUT
+		case "text":
+			options.OutputMode = TEXT_OUTPUT
+		case "pic":
+			options.OutputMode = PIC_PATH
+		case "none":
+			options.OutputMode = PIC_NONE
+		}
+		// output file path
+		if cmdOpts.OutputFile != "" {
+			options.OutputFilePath = cmdOpts.OutputFile
 		}
 	}
 	// check url
@@ -169,8 +200,49 @@ func TestFromCMD(subscription string, configPath *string) error {
 	if jsonOpt, err := json.Marshal(options); err == nil {
 		log.Printf("json options: %s\n", string(jsonOpt))
 	}
-	_, err := TestContext(ctx, options, &OutputMessageWriter{})
-	return err
+	nodes, err := TestContext(ctx, options, &OutputMessageWriter{})
+	if err != nil {
+		return err
+	}
+	// output JSON to stdout when output mode is json
+	if options.OutputMode == JSON_OUTPUT {
+		outputJSON(nodes, options)
+	}
+	return nil
+}
+
+func outputJSON(nodes render.Nodes, options ProfileTestOptions) {
+	var traffic int64
+	successCount := 0
+	for _, node := range nodes {
+		traffic += node.Traffic
+		if node.IsOk {
+			successCount++
+		}
+	}
+	jsonOutput := JSONOutput{
+		Nodes:        nodes,
+		Options:      options,
+		Traffic:      traffic,
+		Duration:     "",
+		SuccessCount: successCount,
+		LinksCount:   len(nodes),
+	}
+	data, err := json.MarshalIndent(&jsonOutput, "", "  ")
+	if err != nil {
+		log.Printf("json marshal error: %v", err)
+		return
+	}
+	// output to file if OutputFilePath is set
+	if options.OutputFilePath != "" {
+		if err := os.WriteFile(options.OutputFilePath, data, 0644); err != nil {
+			log.Printf("failed to write JSON to file %s: %v", options.OutputFilePath, err)
+		} else {
+			log.Printf("JSON result saved to %s", options.OutputFilePath)
+		}
+	} else {
+		fmt.Println(string(data))
+	}
 }
 
 // use as golang api
@@ -311,7 +383,9 @@ type GetSubscriptionLink struct {
 	Group    string `json:"group"`
 }
 
-var subscriptionLinkMap map[string]string = make(map[string]string)
+// subscriptionLinkMap stores mapping of hash -> file path for subscriptions
+// Uses sync.Map for concurrent safety
+var subscriptionLinkMap sync.Map
 
 func getSubscriptionLink(w http.ResponseWriter, r *http.Request) {
 	body := GetSubscriptionLink{}
@@ -338,7 +412,7 @@ func getSubscriptionLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	md5Hash := fmt.Sprintf("%x", md5.Sum([]byte(body.FilePath)))
-	subscriptionLinkMap[md5Hash] = body.FilePath
+	subscriptionLinkMap.Store(md5Hash, body.FilePath)
 	subscriptionLink := fmt.Sprintf("http://%s:10888/getSubscription?key=%s&group=%s", ipAddr.String(), md5Hash, body.Group)
 	fmt.Fprint(w, subscriptionLink)
 }
@@ -353,11 +427,12 @@ func getSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	// sub format
 	sub := queries.Get("sub")
-	filePath, ok := subscriptionLinkMap[key]
+	filePathValue, ok := subscriptionLinkMap.Load(key)
 	if !ok {
 		http.Error(w, "Wrong key", 400)
 		return
 	}
+	filePath := filePathValue.(string)
 	// convert yaml link
 	if isYamlFile(filePath) && utils.IsUrl(filePath) {
 		links, err := getSubscriptionLinks(filePath)

@@ -500,7 +500,7 @@ func (dc *Context) ClipPreserve() {
 		dc.mask = clip
 	} else {
 		mask := image.NewAlpha(image.Rect(0, 0, dc.width, dc.height))
-		draw.DrawMask(mask, mask.Bounds(), clip, image.ZP, dc.mask, image.ZP, draw.Over)
+		draw.DrawMask(mask, mask.Bounds(), clip, image.Point{}, dc.mask, image.Point{}, draw.Over)
 		dc.mask = mask
 	}
 }
@@ -521,7 +521,7 @@ func (dc *Context) SetMask(mask *image.Alpha) error {
 // render the mask geometry and then use it as a mask.
 func (dc *Context) AsMask() *image.Alpha {
 	mask := image.NewAlpha(dc.im.Bounds())
-	draw.Draw(mask, dc.im.Bounds(), dc.im, image.ZP, draw.Src)
+	draw.Draw(mask, dc.im.Bounds(), dc.im, image.Point{}, draw.Src)
 	return mask
 }
 
@@ -555,7 +555,7 @@ func (dc *Context) ResetClip() {
 // Clear fills the entire image with the current color.
 func (dc *Context) Clear() {
 	src := image.NewUniform(dc.color)
-	draw.Draw(dc.im, dc.im.Bounds(), src, image.ZP, draw.Src)
+	draw.Draw(dc.im, dc.im.Bounds(), src, image.Point{}, draw.Src)
 }
 
 // SetPixel sets the color of the specified pixel using the current color.
@@ -681,7 +681,7 @@ func (dc *Context) DrawImageAnchored(im image.Image, x, y int, ax, ay float64) {
 	} else {
 		transformer.Transform(dc.im, s2d, im, im.Bounds(), draw.Over, &draw.Options{
 			DstMask:  dc.mask,
-			DstMaskP: image.ZP,
+			DstMaskP: image.Point{},
 		})
 	}
 }
@@ -757,7 +757,7 @@ func (dc *Context) DrawStringAnchored(s string, x, y, ax, ay float64) {
 	} else {
 		im := image.NewRGBA(image.Rect(0, 0, dc.width, dc.height))
 		dc.drawString(im, s, x, y)
-		draw.DrawMask(dc.im, dc.im.Bounds(), im, image.ZP, dc.mask, image.ZP, draw.Over)
+		draw.DrawMask(dc.im, dc.im.Bounds(), im, image.Point{}, dc.mask, image.Point{}, draw.Over)
 	}
 }
 
@@ -910,7 +910,8 @@ func (dc *Context) Push() {
 func (dc *Context) Pop() {
 	before := *dc
 	s := dc.stack
-	x, s := s[len(s)-1], s[:len(s)-1]
+	x := s[len(s)-1]
+	dc.stack = s[:len(s)-1]
 	*dc = *x
 	dc.mask = before.mask
 	dc.strokePath = before.strokePath
