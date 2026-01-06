@@ -43,12 +43,12 @@ jobs:
           NODE_ENV=production npm run --prefix web/gui build
 
       - name: Build
-        run: go build -o lite
+        run: go build -o proxy-speedtest
 
       - name: Test
         run: |
           go test -v ./...
-          ls -la lite
+          ls -la proxy-speedtest
 
   # Multi-platform Release
   release:
@@ -114,26 +114,13 @@ jobs:
           go build -trimpath -ldflags "-X 'github.com/1orz/proxy-speedtest/constant.Version=${VERSION}' \
             -X 'github.com/1orz/proxy-speedtest/constant.BuildTime=${BUILDTIME}' \
             -w -s" \
-            -o lite-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
-
-      - name: Create archive (Unix)
-        if: matrix.goos != 'windows'
-        run: |
-          chmod +x lite-${{ matrix.goos }}-${{ matrix.goarch }}
-          gzip -9 -c lite-${{ matrix.goos }}-${{ matrix.goarch }} > lite-${{ matrix.goos }}-${{ matrix.goarch }}-${{ steps.get_version.outputs.VERSION }}.gz
-
-      - name: Create archive (Windows)
-        if: matrix.goos == 'windows'
-        run: |
-          zip -9 lite-${{ matrix.goos }}-${{ matrix.goarch }}-${{ steps.get_version.outputs.VERSION }}.zip lite-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }}
+            -o proxy-speedtest${{ matrix.suffix }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lite-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: |
-            *.gz
-            *.zip
+          name: proxy-speedtest-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: proxy-speedtest${{ matrix.suffix }}
 
   # Publish Release
   publish:
@@ -144,19 +131,45 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Get version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          merge-multiple: true
 
       - name: List artifacts
-        run: ls -la artifacts/
+        run: find artifacts -type f
+
+      - name: Create release archives
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          mkdir -p release
+          
+          # Unix platforms (tar.gz)
+          for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            if [ -d "artifacts/proxy-speedtest-${platform}" ]; then
+              chmod +x artifacts/proxy-speedtest-${platform}/proxy-speedtest
+              tar -czvf release/proxy-speedtest-${platform}-${VERSION}.tar.gz \
+                -C artifacts/proxy-speedtest-${platform} proxy-speedtest
+            fi
+          done
+          
+          # Windows (zip)
+          if [ -d "artifacts/proxy-speedtest-windows-amd64" ]; then
+            cd artifacts/proxy-speedtest-windows-amd64
+            zip -9 ../../release/proxy-speedtest-windows-amd64-${VERSION}.zip proxy-speedtest.exe
+            cd ../..
+          fi
+          
+          ls -la release/
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*
+          files: release/*
           draft: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
