@@ -1,7 +1,7 @@
 # ==============================================================================
 # Project Configuration
 # ==============================================================================
-NAME := lite
+NAME := proxy-speedtest
 BINDIR := bin
 MODULE := github.com/1orz/proxy-speedtest
 

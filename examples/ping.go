@@ -54,7 +54,7 @@ func pingSync(ctx context.Context, opts web.ProfileTestOptions) error {
 
 	for _, node := range nodes {
 		// tested node info here
-		if node.IsOk {
+		if node.Success {
 			fmt.Println("id:", node.Id, node.Remarks, "ping:", node.Ping)
 		}
 	}
@@ -69,7 +69,7 @@ func pingAsync(ctx context.Context, opts web.ProfileTestOptions) error {
 	count := len(links)
 	for i := 0; i < count; i++ {
 		node := <-nodeChan
-		if node.IsOk {
+		if node.Success {
 			fmt.Println("id:", node.Id, node.Remarks, "ping:", node.Ping, "avg", download.ByteCountIECTrim(node.AvgSpeed), "max", download.ByteCountIECTrim(node.MaxSpeed), "link:", links[node.Id])
 		}
 	}

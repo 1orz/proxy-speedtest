@@ -70,9 +70,9 @@ type Node struct {
 	Remarks  string `en:"Remarks" cn:"备注" json:"remarks"`
 	Protocol string `en:"Protocol" cn:"协议" json:"protocol"`
 	Ping     string `en:"Ping" cn:"Ping" json:"ping"`
-	AvgSpeed int64  `en:"AvgSpeed" cn:"平均速度" json:"avg_speed"`
-	MaxSpeed int64  `en:"MaxSpeed" cn:"最大速度" json:"max_speed"`
-	IsOk     bool   `json:"isok"`
+	AvgSpeed int64  `en:"AvgSpeed" cn:"平均速度" json:"avgSpeed"`
+	MaxSpeed int64  `en:"MaxSpeed" cn:"最大速度" json:"maxSpeed"`
+	Success  bool   `json:"success"`
 	Traffic  int64  `json:"traffic"`
 	Link     string `json:"link,omitempty"` // api only
 }

@@ -27,6 +27,7 @@ var (
 	concurrency  = flag.Int("concurrency", 2, "number of concurrent tests")
 	output       = flag.String("output", "json", "output format: json, text, pic, none")
 	outputFile   = flag.String("output-file", "", "output file path for JSON result")
+	outputPic    = flag.String("output-pic", "", "output pic path (can be used with any output format)")
 	downloadURL  = flag.String("download-url", "", "custom download URL for speed test")
 	downloadSize = flag.String("download-size", "", "download size: 10mb, 100mb, or custom URL bytes param")
 	mode         = flag.String("mode", "all", "test mode: pingonly, speedonly, all")
@@ -52,13 +53,14 @@ func main() {
 	// Test from command line
 	if *test != "" {
 		cmdOpts := &webServer.CMDOptions{
-			Timeout:      *timeout,
-			Concurrency:  *concurrency,
-			Output:       *output,
-			OutputFile:   *outputFile,
-			DownloadURL:  *downloadURL,
-			DownloadSize: *downloadSize,
-			Mode:         *mode,
+			Timeout:       *timeout,
+			Concurrency:   *concurrency,
+			Output:        *output,
+			OutputFile:    *outputFile,
+			OutputPicPath: *outputPic,
+			DownloadURL:   *downloadURL,
+			DownloadSize:  *downloadSize,
+			Mode:          *mode,
 		}
 		if err := webServer.TestFromCMD(*test, conf, cmdOpts); err != nil {
 			log.Fatal(err)
@@ -77,13 +79,14 @@ func main() {
 	// Test a single link directly (if provided as argument)
 	if link != "" {
 		cmdOpts := &webServer.CMDOptions{
-			Timeout:      *timeout,
-			Concurrency:  *concurrency,
-			Output:       *output,
-			OutputFile:   *outputFile,
-			DownloadURL:  *downloadURL,
-			DownloadSize: *downloadSize,
-			Mode:         *mode,
+			Timeout:       *timeout,
+			Concurrency:   *concurrency,
+			Output:        *output,
+			OutputFile:    *outputFile,
+			OutputPicPath: *outputPic,
+			DownloadURL:   *downloadURL,
+			DownloadSize:  *downloadSize,
+			Mode:          *mode,
 		}
 		if err := webServer.TestFromCMD(link, conf, cmdOpts); err != nil {
 			log.Fatal(err)

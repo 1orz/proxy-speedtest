@@ -55,7 +55,7 @@ message TestReply {
   string Ping = 5;
   int64 AvgSpeed = 6;
   int64 MaxSpeed = 7;
-  bool IsOk = 8;
+  bool Success = 8;
   int64 Traffic = 9;
   string Link = 10;
 }

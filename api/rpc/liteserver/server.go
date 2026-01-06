@@ -85,7 +85,7 @@ func (s *server) StartTest(req *pb.TestRequest, stream pb.TestProxy_StartTestSer
 			Ping:      node.Ping,
 			AvgSpeed:  node.AvgSpeed,
 			MaxSpeed:  node.MaxSpeed,
-			IsOk:      node.IsOk,
+			Success:   node.Success,
 			Traffic:   node.Traffic,
 			Link:      node.Link,
 		}

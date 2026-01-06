@@ -285,18 +285,20 @@ type ProfileTestOptions struct {
 	GeneratePicMode int           `json:"generatePicMode"` // 0: base64 1:pic path 2: no pic 3: json @deprecated use outputMode
 	OutputMode      int           `json:"outputMode"`
 	OutputFilePath  string        `json:"outputFilePath,omitempty"` // output file path for JSON result
+	OutputPicPath   string        `json:"outputPicPath,omitempty"`  // output pic path (can be used with JSON output)
 	DownloadURL     string        `json:"downloadUrl"`              // custom download URL for speed test
 	DownloadSize    string        `json:"downloadSize"`             // 10mb, 100mb, or custom
 }
 
 type CMDOptions struct {
-	Timeout      int
-	Concurrency  int
-	Output       string // json, text, pic, none
-	OutputFile   string // output file path for JSON result
-	DownloadURL  string
-	DownloadSize string
-	Mode         string // pingonly, speedonly, all
+	Timeout       int
+	Concurrency   int
+	Output        string // json, text, pic, none
+	OutputFile    string // output file path for JSON result
+	OutputPicPath string // output pic path (can be used with any output mode)
+	DownloadURL   string
+	DownloadSize  string
+	Mode          string // pingonly, speedonly, all
 }
 
 type JSONOutput struct {
@@ -473,7 +475,7 @@ func (p *ProfileTest) testAll(ctx context.Context) (render.Nodes, error) {
 		node.Link = p.Links[node.Id]
 		nodes[node.Id] = node
 		traffic += node.Traffic
-		if node.IsOk {
+		if node.Success {
 			successCount += 1
 		}
 	}
@@ -494,6 +496,12 @@ func (p *ProfileTest) testAll(ctx context.Context) (render.Nodes, error) {
 		// render the result to pic
 		p.renderPic(nodes, traffic, duration, successCount, linksCount)
 	}
+
+	// generate pic if OutputPicPath is set (can be used with any output mode)
+	if p.Options.OutputPicPath != "" && p.Options.OutputMode != PIC_PATH && p.Options.OutputMode != PIC_BASE64 {
+		p.savePic(nodes, traffic, duration, successCount, linksCount)
+	}
+
 	return nodes, nil
 }
 
@@ -531,6 +539,19 @@ func (p *ProfileTest) saveJSON(nodes render.Nodes, traffic int64, duration strin
 		return err
 	}
 	return os.WriteFile("output.json", data, 0644)
+}
+
+func (p *ProfileTest) savePic(nodes render.Nodes, traffic int64, duration string, successCount int, linksCount int) error {
+	fontPath := "WenQuanYiMicroHei-01.ttf"
+	options := render.NewTableOptions(40, 30, 0.5, 0.5, p.Options.FontSize, 0.5, fontPath, p.Options.Language, p.Options.Theme, "Asia/Shanghai", FontBytes)
+	table, err := render.NewTableWithOption(nodes, &options)
+	if err != nil {
+		return err
+	}
+	msg := table.FormatTraffic(download.ByteCountIECTrim(traffic), duration, fmt.Sprintf("%d/%d", successCount, linksCount))
+	table.Draw(p.Options.OutputPicPath, msg)
+	log.Printf("Pic result saved to %s", p.Options.OutputPicPath)
+	return nil
 }
 
 func (p *ProfileTest) saveText(nodes render.Nodes) error {
@@ -574,7 +595,7 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 			Ping:     fmt.Sprintf("%d", elapse),
 			AvgSpeed: 0,
 			MaxSpeed: 0,
-			IsOk:     elapse > 0,
+			Success:  elapse > 0,
 		}
 		nodeChan <- node
 		return err
@@ -621,7 +642,7 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 			Ping:     fmt.Sprintf("%d", elapse),
 			AvgSpeed: avg,
 			MaxSpeed: max,
-			IsOk:     true,
+			Success:  true,
 			Traffic:  sum,
 		}
 		nodeChan <- node

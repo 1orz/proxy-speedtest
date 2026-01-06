@@ -33,7 +33,7 @@ type Node struct {
 	MaxSpeed int64  `json:"maxSpeed"`
 	Traffic  int64  `json:"traffic,omitempty"`
 	Link     string `json:"link,omitempty"`
-	IsOK     bool   `json:"isOk"`
+	Success  bool   `json:"success"`
 }
 
 // Nodes is a slice of Node with sorting capabilities
@@ -60,7 +60,7 @@ func ResultToNode(result *tester.Result, groupName string) Node {
 		MaxSpeed: result.MaxSpeed,
 		Traffic:  result.Traffic,
 		Link:     result.Config.Link,
-		IsOK:     result.IsOK,
+		Success:  result.Success,
 	}
 
 	if result.Ping > 0 {
@@ -86,7 +86,7 @@ func ResultsToOutput(results []*tester.Result, groupName string, duration string
 		}
 		output.Nodes[i] = ResultToNode(result, groupName)
 		output.TotalTraffic += result.Traffic
-		if result.IsOK {
+		if result.Success {
 			output.SuccessCount++
 		}
 	}
@@ -191,7 +191,7 @@ func (o *Output) ToText() string {
 
 	for _, node := range o.Nodes {
 		status := "✗"
-		if node.IsOK {
+		if node.Success {
 			status = "✓"
 		}
 		sb.WriteString(fmt.Sprintf("[%s] %s | %s | Ping: %sms | Speed: %s\n",
@@ -215,7 +215,7 @@ func (o *Output) WriteText(filePath string) error {
 func (o *Output) GetWorkingLinks() []string {
 	var links []string
 	for _, node := range o.Nodes {
-		if node.IsOK && node.Link != "" {
+		if node.Success && node.Link != "" {
 			links = append(links, node.Link)
 		}
 	}

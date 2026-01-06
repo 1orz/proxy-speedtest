@@ -316,7 +316,7 @@ type TestReply struct {
 	Ping      string `protobuf:"bytes,5,opt,name=Ping,proto3" json:"Ping,omitempty"`
 	AvgSpeed  int64  `protobuf:"varint,6,opt,name=AvgSpeed,proto3" json:"AvgSpeed,omitempty"`
 	MaxSpeed  int64  `protobuf:"varint,7,opt,name=MaxSpeed,proto3" json:"MaxSpeed,omitempty"`
-	IsOk      bool   `protobuf:"varint,8,opt,name=IsOk,proto3" json:"IsOk,omitempty"`
+	Success   bool   `protobuf:"varint,8,opt,name=Success,proto3" json:"Success,omitempty"`
 	Traffic   int64  `protobuf:"varint,9,opt,name=Traffic,proto3" json:"Traffic,omitempty"`
 	Link      string `protobuf:"bytes,10,opt,name=Link,proto3" json:"Link,omitempty"`
 }
@@ -402,9 +402,9 @@ func (x *TestReply) GetMaxSpeed() int64 {
 	return 0
 }
 
-func (x *TestReply) GetIsOk() bool {
+func (x *TestReply) GetSuccess() bool {
 	if x != nil {
-		return x.IsOk
+		return x.Success
 	}
 	return false
 }

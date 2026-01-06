@@ -188,6 +188,10 @@ func TestFromCMD(subscription string, configPath *string, cmdOpts *CMDOptions) e
 		if cmdOpts.OutputFile != "" {
 			options.OutputFilePath = cmdOpts.OutputFile
 		}
+		// output pic path (can be used with any output mode)
+		if cmdOpts.OutputPicPath != "" {
+			options.OutputPicPath = cmdOpts.OutputPicPath
+		}
 	}
 	// check url
 	if len(subscription) > 0 && subscription != options.Subscription {
@@ -216,7 +220,7 @@ func outputJSON(nodes render.Nodes, options ProfileTestOptions) {
 	successCount := 0
 	for _, node := range nodes {
 		traffic += node.Traffic
-		if node.IsOk {
+		if node.Success {
 			successCount++
 		}
 	}
@@ -314,7 +318,7 @@ func generateResult(w http.ResponseWriter, r *http.Request) {
 	successCount := 0
 	for _, v := range result.Nodes {
 		linksCount += 1
-		if v.IsOk {
+		if v.Success {
 			successCount += 1
 		}
 	}

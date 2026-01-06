@@ -18,29 +18,29 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 
 ```bash
 # run this command then open http://127.0.0.1:10888/ in your browser to start speed test
-./lite
+./proxy-speedtest
 
 # start with another port
-./lite -p 10889
+./proxy-speedtest -p 10889
 
 # test in command line only mode (output JSON by default)
-./lite --test https://example.com/subscription
+./proxy-speedtest --test https://example.com/subscription
 
 # test with custom timeout (seconds) and concurrency
-./lite --test https://example.com/subscription --timeout 20 --concurrency 4
+./proxy-speedtest --test https://example.com/subscription --timeout 20 --concurrency 4
 
 # test with custom download file size (10mb, 100mb, cloudflare10, cloudflare100)
-./lite --test https://example.com/subscription --download-size 100mb
+./proxy-speedtest --test https://example.com/subscription --download-size 100mb
 
 # test with custom download URL
-./lite --test https://example.com/subscription --download-url "https://speed.cloudflare.com/__down?bytes=50000000"
+./proxy-speedtest --test https://example.com/subscription --download-url "https://speed.cloudflare.com/__down?bytes=50000000"
 
 # output formats: json (default), text, pic, none
-./lite --test https://example.com/subscription --output json
-./lite --test https://example.com/subscription --output text
+./proxy-speedtest --test https://example.com/subscription --output json
+./proxy-speedtest --test https://example.com/subscription --output text
 
 # test with config file
-./lite --config config.json --test https://example.com/subscription
+./proxy-speedtest --config config.json --test https://example.com/subscription
 ```
 
 ### Command line options
@@ -82,7 +82,7 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 
 ```bash
 # start the grpc server
-./lite -grpc -p 10999
+./proxy-speedtest -grpc -p 10999
 
 # grpc go client example in ./api/rpc/liteclient/client.go
 # grpc python client example in ./api/rpc/liteclientpy/client.py
@@ -92,13 +92,13 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 
 ```bash
 # use default port 8090
-./lite vmess://...
-./lite vless://...
-./lite trojan://...
-./lite ss://...
+./proxy-speedtest vmess://...
+./proxy-speedtest vless://...
+./proxy-speedtest trojan://...
+./proxy-speedtest ss://...
 
 # use another port
-./lite -p 8091 vmess://...
+./proxy-speedtest -p 8091 vmess://...
 ```
 
 ## Build
@@ -111,14 +111,14 @@ npm install --prefix web/gui
 npm run --prefix web/gui build
 
 # build binary
-go build -o lite
+go build
 ```
 
 ## Docker
 
 ```bash
-docker build --network=host -t lite:$(git describe --tags --abbrev=0) -f ./docker/Dockerfile ./
-docker run -p 10888:10888/tcp lite:$(git describe --tags --abbrev=0)
+docker build --network=host -t proxy-speedtest:$(git describe --tags --abbrev=0) .
+docker run -p 10888:10888/tcp proxy-speedtest:$(git describe --tags --abbrev=0)
 ```
 
 ## Credits

@@ -12,7 +12,7 @@ python3 -m grpc_tools.protoc --proto_path=. ./lite.proto --python_out=. --grpc_p
 ### start test
 ```bash
 # open a new terminal to start the grpc server
-./lite -grcp -p 10999
+./proxy-speedtest -grpc -p 10999
 
 # open another terminal to start the python client
 python3 client.py

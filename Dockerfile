@@ -50,7 +50,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
     -ldflags "-X 'github.com/1orz/proxy-speedtest/constant.Version=${VERSION}' \
               -X 'github.com/1orz/proxy-speedtest/constant.BuildTime=${BUILD_TIME}' \
               -w -s" \
-    -o /build/lite .
+    -o /build/proxy-speedtest .
 
 # ============================================================================
 # Stage 3: Final minimal image
@@ -58,7 +58,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
 FROM gcr.io/distroless/static-debian12:nonroot
 
 # Copy binary from builder
-COPY --from=go-builder /build/lite /lite
+COPY --from=go-builder /build/proxy-speedtest /proxy-speedtest
 
 # Expose default port
 EXPOSE 10888
@@ -70,7 +70,7 @@ USER nonroot:nonroot
 # Note: distroless doesn't have curl/wget, so we use the binary itself if it supports health endpoint
 # Or remove this if not applicable
 # HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-#     CMD ["/lite", "health"] || exit 1
+#     CMD ["/proxy-speedtest", "health"] || exit 1
 
-ENTRYPOINT ["/lite"]
+ENTRYPOINT ["/proxy-speedtest"]
 

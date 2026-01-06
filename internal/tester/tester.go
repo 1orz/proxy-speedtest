@@ -48,7 +48,7 @@ type Result struct {
 	MaxSpeed int64             // Maximum download speed in bytes/s
 	Traffic  int64             // Total traffic downloaded in bytes
 	Error    error             // Error if test failed
-	IsOK     bool              // Whether the proxy is working
+	Success  bool              // Whether the proxy is working
 }
 
 // Tester performs speed tests on proxies
@@ -142,7 +142,7 @@ func (t *Tester) testOne(ctx context.Context, index int, config *xray.ProxyConfi
 			return result
 		}
 		result.Ping = ping
-		result.IsOK = true
+		result.Success = true
 	}
 
 	// Speed test
@@ -150,14 +150,14 @@ func (t *Tester) testOne(ctx context.Context, index int, config *xray.ProxyConfi
 		avgSpeed, maxSpeed, traffic, err := t.speedTest(ctx, dialer)
 		if err != nil {
 			// Ping succeeded but speed test failed
-			if result.IsOK {
+			if result.Success {
 				result.Error = fmt.Errorf("speed test: %w", err)
 			}
 		} else {
 			result.AvgSpeed = avgSpeed
 			result.MaxSpeed = maxSpeed
 			result.Traffic = traffic
-			result.IsOK = true
+			result.Success = true
 		}
 	}
 
