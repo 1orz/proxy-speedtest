@@ -139,6 +139,8 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           path: artifacts
+          # 只下载各平台二进制,排除 Docker job 上传的 *.dockerbuild 构建记录
+          pattern: proxy-speedtest-*
 
       - name: List artifacts
         run: find artifacts -type f
@@ -237,6 +239,4 @@ jobs:
           build-args: |
             VERSION=${{ steps.get_version.outputs.VERSION }}
             BUILD_TIME=${{ steps.get_version.outputs.BUILD_TIME }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
