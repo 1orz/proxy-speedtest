@@ -117,7 +117,7 @@ jobs:
             -o proxy-speedtest${{ matrix.suffix }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: proxy-speedtest-${{ matrix.goos }}-${{ matrix.goarch }}
           path: proxy-speedtest${{ matrix.suffix }}
