@@ -2,7 +2,7 @@ FROM node:26-alpine AS gui-builder
 
 WORKDIR /build
 
-COPY web/gui/package.json web/gui/package-lock.json* web/gui/pnpm-lock.yaml* web/gui/yarn.lock* ./web/gui/
+COPY web/gui/package.json web/gui/package-lock.json ./web/gui/
 
 RUN cd web/gui && \
     if [ -f pnpm-lock.yaml ]; then npm install -g pnpm && pnpm install --frozen-lockfile; \
