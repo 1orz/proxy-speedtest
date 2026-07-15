@@ -1,4 +1,4 @@
-FROM node:24-alpine AS gui-builder
+FROM node:26-alpine AS gui-builder
 
 WORKDIR /build
 
@@ -13,7 +13,7 @@ RUN cd web/gui && \
 COPY web/gui/ ./web/gui/
 RUN cd web/gui && npm run build
 
-FROM golang:1.25-alpine AS go-builder
+FROM golang:1.26-alpine AS go-builder
 
 ARG VERSION=unknown
 ARG BUILD_TIME=unknown

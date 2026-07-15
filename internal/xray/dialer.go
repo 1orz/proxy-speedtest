@@ -355,9 +355,12 @@ func buildStreamJSON(config *ProxyConfig) map[string]interface{} {
 		if len(stream.TLS.ALPN) > 0 {
 			tlsSettings["alpn"] = stream.TLS.ALPN
 		}
-		if stream.TLS.AllowInsecure {
-			tlsSettings["allowInsecure"] = true
-		}
+		// xray-core v26 起移除了 "allowInsecure":2026-06-01 之后 core.LoadConfig 会直接拒绝
+		// 含该字段的配置(见 infra/conf/transport_internet.go 的 TLSConfig.Build)。因此不再
+		// 输出 allowInsecure,改为依赖 serverName 走标准 TLS 校验:证书有效的节点(即便订阅
+		// 标注了 skip-cert-verify)仍可测试,真正自签名的节点则无法再跳过校验。订阅的原始意图
+		// 仍保留在 stream.TLS.AllowInsecure 字段中,供未来扩展(如证书 pin)使用。
+		_ = stream.TLS.AllowInsecure
 		if stream.TLS.Fingerprint != "" {
 			tlsSettings["fingerprint"] = stream.TLS.Fingerprint
 		}
