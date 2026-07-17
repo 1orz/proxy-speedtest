@@ -54,6 +54,8 @@ const defaultOptions: TestOptions = {
   fontSize: 24,
   theme: 'rainbow',
   testMode: 2,
+  downloadSize: '',
+  downloadUrl: '',
 }
 
 export const useTestStore = create<TestState>((set, get) => ({

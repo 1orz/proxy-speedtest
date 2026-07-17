@@ -17,9 +17,12 @@ import (
 const (
 	DownloadLinkDefault = "https://download.microsoft.com/download/2/0/E/20E90413-712F-438C-988E-FDAA79A8AC3D/dotnetfx35.exe"
 	CloudflareLink100   = "https://speed.cloudflare.com/__down?bytes=100000000"
+	CloudflareLink200   = "https://speed.cloudflare.com/__down?bytes=200000000"
 	CloudflareLink10    = "https://speed.cloudflare.com/__down?bytes=10000000"
 	Cachefly10          = "http://cachefly.cachefly.net/10mb.test"
 	Cachefly100         = "http://cachefly.cachefly.net/100mb.test"
+	HetznerLink100      = "https://ash-speed.hetzner.com/100MB.bin"
+	ThinkBroadband100   = "http://ipv4.download.thinkbroadband.com/100MB.zip"
 )
 
 func GetDownloadURL(size string, customURL string) string {
@@ -29,12 +32,18 @@ func GetDownloadURL(size string, customURL string) string {
 	switch size {
 	case "10mb":
 		return Cachefly10
-	case "100mb":
+	case "100mb", "cachefly100":
 		return Cachefly100
 	case "cloudflare10":
 		return CloudflareLink10
 	case "cloudflare100":
 		return CloudflareLink100
+	case "cloudflare200":
+		return CloudflareLink200
+	case "hetzner100":
+		return HetznerLink100
+	case "thinkbroadband100":
+		return ThinkBroadband100
 	default:
 		return DownloadLinkDefault
 	}

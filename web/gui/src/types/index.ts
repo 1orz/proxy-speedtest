@@ -25,6 +25,8 @@ export interface TestOptions {
   fontSize: number
   theme: 'rainbow' | 'original'
   testMode: number
+  downloadSize: string
+  downloadUrl: string
 }
 
 export interface WebSocketMessage {

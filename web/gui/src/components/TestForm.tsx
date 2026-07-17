@@ -1,4 +1,4 @@
-import { useState, useCallback, type DragEvent } from 'react'
+import { useState, useCallback, useEffect, type DragEvent } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Play, Square, Upload, X, Settings2, FileText, Wand2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -98,6 +98,8 @@ export function TestForm() {
           language: options.language,
           fontSize: options.fontSize,
           theme: options.theme,
+          downloadSize: options.downloadSize,
+          downloadUrl: options.downloadUrl,
         }
         send(JSON.stringify(data))
       } else {
@@ -241,6 +243,8 @@ interface SettingsProps {
     language: 'en' | 'cn'
     fontSize: number
     theme: 'rainbow' | 'original'
+    downloadSize: string
+    downloadUrl: string
   }
   setOptions: (options: Partial<SettingsProps['options']>) => void
   loading?: boolean
@@ -331,12 +335,12 @@ function BasicSettings({
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <label className="text-sm font-medium text-muted-foreground">并发数</label>
-          <Input
-            type="number"
+          <NumberField
             min={1}
             max={50}
+            fallback={2}
             value={options.concurrency}
-            onChange={(e) => setOptions({ concurrency: parseInt(e.target.value) || 2 })}
+            onChange={(n) => setOptions({ concurrency: n })}
             disabled={loading}
           />
         </div>
@@ -379,12 +383,12 @@ function AdvancedSettings({ options, setOptions, loading }: SettingsProps) {
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <label className="text-sm font-medium text-muted-foreground">测试时长 (秒)</label>
-          <Input
-            type="number"
+          <NumberField
             min={5}
             max={60}
+            fallback={15}
             value={options.timeout}
-            onChange={(e) => setOptions({ timeout: parseInt(e.target.value) || 15 })}
+            onChange={(n) => setOptions({ timeout: n })}
             disabled={loading}
           />
         </div>
@@ -417,6 +421,49 @@ function AdvancedSettings({ options, setOptions, loading }: SettingsProps) {
           去除重复节点
         </label>
       </div>
+
+      {/* 下载测速端点 */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-muted-foreground">下载测速端点</label>
+        <Select
+          value={options.downloadSize || 'default'}
+          onValueChange={(v) => {
+            if (v === 'custom') {
+              setOptions({ downloadSize: 'custom' })
+            } else if (v === 'default') {
+              setOptions({ downloadSize: '', downloadUrl: '' })
+            } else {
+              setOptions({ downloadSize: v, downloadUrl: '' })
+            }
+          }}
+          disabled={loading}
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="default">默认（自动）</SelectItem>
+            <SelectItem value="cloudflare100">Cloudflare 100MB</SelectItem>
+            <SelectItem value="cloudflare200">Cloudflare 200MB</SelectItem>
+            <SelectItem value="cachefly100">Cachefly 100MB</SelectItem>
+            <SelectItem value="hetzner100">Hetzner 100MB（美国）</SelectItem>
+            <SelectItem value="thinkbroadband100">ThinkBroadband 100MB（英国）</SelectItem>
+            <SelectItem value="custom">自定义 URL</SelectItem>
+          </SelectContent>
+        </Select>
+        {options.downloadSize === 'custom' && (
+          <Input
+            value={options.downloadUrl}
+            onChange={(e) => setOptions({ downloadUrl: e.target.value })}
+            placeholder="https://example.com/100mb.bin （需可通过代理访问的大文件直链）"
+            disabled={loading}
+            className="mt-2"
+          />
+        )}
+        <p className="text-xs text-muted-foreground">
+          用于速度测试的下载目标；预设为公开测速端点，也可自定义。
+        </p>
+      </div>
     </div>
   )
 }
@@ -442,12 +489,12 @@ function ExportSettings({ options, setOptions }: SettingsProps) {
         </div>
         <div className="space-y-2">
           <label className="text-sm font-medium text-muted-foreground">字体大小</label>
-          <Input
-            type="number"
+          <NumberField
             min={12}
             max={36}
+            fallback={24}
             value={options.fontSize}
-            onChange={(e) => setOptions({ fontSize: parseInt(e.target.value) || 24 })}
+            onChange={(n) => setOptions({ fontSize: n })}
           />
         </div>
       </div>
@@ -488,6 +535,52 @@ function ExportSettings({ options, setOptions }: SettingsProps) {
         </div>
       </div>
     </div>
+  )
+}
+
+// NumberField 是一个受控数字输入,允许输入过程中临时清空(不会像 `parseInt(v) || default`
+// 那样在清空瞬间跳回默认值),因此可以直接把并发数改成 1。失焦时再做兜底与范围钳制。
+function NumberField({
+  value,
+  min,
+  max,
+  fallback,
+  onChange,
+  disabled,
+}: {
+  value: number
+  min: number
+  max: number
+  fallback: number
+  onChange: (n: number) => void
+  disabled?: boolean
+}) {
+  const [text, setText] = useState(String(value))
+
+  useEffect(() => {
+    setText(String(value))
+  }, [value])
+
+  return (
+    <Input
+      type="number"
+      min={min}
+      max={max}
+      value={text}
+      disabled={disabled}
+      onChange={(e) => {
+        setText(e.target.value)
+        const n = parseInt(e.target.value, 10)
+        if (!isNaN(n)) onChange(n)
+      }}
+      onBlur={() => {
+        let n = parseInt(text, 10)
+        if (isNaN(n)) n = fallback
+        n = Math.min(max, Math.max(min, n))
+        onChange(n)
+        setText(String(n))
+      }}
+    />
   )
 }
 
