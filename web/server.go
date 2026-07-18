@@ -26,19 +26,72 @@ import (
 
 var upgrader = websocket.Upgrader{}
 
-func ServeFile(port int) error {
+func ServeFile(port int, bind string) error {
 	// TODO: Mobile UI
 	http.HandleFunc("/", serverFile)
 	http.HandleFunc("/test", updateTest)
 	http.HandleFunc("/getSubscriptionLink", getSubscriptionLink)
 	http.HandleFunc("/getSubscription", getSubscription)
-	http.HandleFunc("/generateResult", generateResult)
-	log.Printf("Start server at http://127.0.0.1:%d\n", port)
-	if ipAddr, err := localIP(); err == nil {
-		log.Printf("Start server at http://%s", net.JoinHostPort(ipAddr.String(), strconv.Itoa(port)))
+
+	host, err := ResolveBindAddress(bind)
+	if err != nil {
+		return err
 	}
-	err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
-	return err
+	// host == "" listens on all interfaces (":port"), preserving previous behaviour
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	if bind == "" {
+		log.Printf("Start server at http://127.0.0.1:%d", port)
+		if ipAddr, err := localIP(); err == nil {
+			log.Printf("Start server at http://%s", net.JoinHostPort(ipAddr.String(), strconv.Itoa(port)))
+		}
+	} else {
+		log.Printf("Start server at http://%s (bound to %q)", addr, bind)
+	}
+	return http.ListenAndServe(addr, nil)
+}
+
+// ResolveBindAddress turns a user-supplied bind value into a listen host.
+// Empty string -> all interfaces. A literal IP is used as-is. Anything else is
+// treated as a network interface name and resolved to its first usable IP,
+// which is handy for pinning the server to e.g. the tailscale0 interface.
+func ResolveBindAddress(bind string) (string, error) {
+	if bind == "" {
+		return "", nil
+	}
+	if net.ParseIP(bind) != nil {
+		return bind, nil
+	}
+	iface, err := net.InterfaceByName(bind)
+	if err != nil {
+		return "", fmt.Errorf("bind: interface %q not found: %w", bind, err)
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return "", fmt.Errorf("bind: cannot read addresses of %q: %w", bind, err)
+	}
+	var v6 string
+	for _, a := range addrs {
+		var ip net.IP
+		switch v := a.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil || ip.IsLinkLocalUnicast() {
+			continue
+		}
+		if ip4 := ip.To4(); ip4 != nil {
+			return ip4.String(), nil
+		}
+		if v6 == "" {
+			v6 = ip.String()
+		}
+	}
+	if v6 != "" {
+		return v6, nil
+	}
+	return "", fmt.Errorf("bind: interface %q has no usable IP address", bind)
 }
 
 func serverFile(w http.ResponseWriter, r *http.Request) {
@@ -131,7 +184,6 @@ func TestFromCMD(subscription string, configPath *string, cmdOpts *CMDOptions) e
 	options := ProfileTestOptions{
 		GroupName:       "Default",
 		SpeedTestMode:   "all",
-		PingMethod:      "googleping",
 		SortMethod:      "rspeed",
 		Concurrency:     2,
 		TestMode:        2,
@@ -280,53 +332,6 @@ func TestAsyncContext(ctx context.Context, options ProfileTestOptions) (chan ren
 	}
 	nodeChan, err := p.TestAll(ctx, nil)
 	return nodeChan, links, err
-}
-
-type TestResult struct {
-	TotalTraffic string `json:"totalTraffic"`
-	TotalTime    string `json:"totalTime"`
-	Language     string `json:"language"`
-	FontSize     int    `json:"fontSize"`
-	Theme        string `json:"theme"`
-	// SortMethod   string       `json:"sortMethod"`
-	Nodes render.Nodes `json:"nodes"`
-}
-
-func generateResult(w http.ResponseWriter, r *http.Request) {
-	result := TestResult{}
-	if r.Body == nil {
-		http.Error(w, "Please send a request body", 400)
-		return
-	}
-	data, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Please send a request body", 400)
-		return
-	}
-	if err = json.Unmarshal(data, &result); err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	fontPath := "WenQuanYiMicroHei-01.ttf"
-	options := render.NewTableOptions(40, 30, 0.5, 0.5, result.FontSize, 0.5, fontPath, result.Language, result.Theme, "Asia/Shanghai", FontBytes)
-	table, err := render.NewTableWithOption(result.Nodes, &options)
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	linksCount := 0
-	successCount := 0
-	for _, v := range result.Nodes {
-		linksCount += 1
-		if v.Success {
-			successCount += 1
-		}
-	}
-	msg := table.FormatTraffic(result.TotalTraffic, result.TotalTime, fmt.Sprintf("%d/%d", successCount, linksCount))
-	if picdata, err := table.EncodeB64(msg); err == nil {
-		fmt.Fprint(w, picdata)
-	}
-
 }
 
 func isPrivateIP(ip net.IP) bool {

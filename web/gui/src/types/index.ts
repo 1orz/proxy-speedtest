@@ -19,7 +19,6 @@ export interface TestOptions {
   unique: boolean
   groupname: string
   speedtestMode: 'all' | 'pingonly' | 'speedonly'
-  pingMethod: 'googleping' | 'tcping'
   sortMethod: 'rspeed' | 'speed' | 'ping' | 'rping' | 'none'
   language: 'en' | 'cn'
   fontSize: number
@@ -49,7 +48,6 @@ export interface WebSocketMessage {
 }
 
 export type SpeedTestMode = 'all' | 'pingonly' | 'speedonly'
-export type PingMethod = 'googleping' | 'tcping'
 export type SortMethod = 'rspeed' | 'speed' | 'ping' | 'rping' | 'none'
 export type Language = 'en' | 'cn'
 export type Theme = 'rainbow' | 'original'

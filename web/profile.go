@@ -270,7 +270,6 @@ const (
 type ProfileTestOptions struct {
 	GroupName       string        `json:"group"`
 	SpeedTestMode   string        `json:"speedtestMode"` // speedonly pingonly all
-	PingMethod      string        `json:"pingMethod"`    // googleping
 	SortMethod      string        `json:"sortMethod"`    // speed rspeed ping rping
 	Concurrency     int           `json:"concurrency"`
 	TestMode        int           `json:"testMode"` // 2: ALLTEST 3: RETEST

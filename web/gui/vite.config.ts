@@ -19,7 +19,6 @@ export default defineConfig({
       },
       '/getSubscriptionLink': 'http://127.0.0.1:10888',
       '/getSubscription': 'http://127.0.0.1:10888',
-      '/generateResult': 'http://127.0.0.1:10888',
     },
   },
 })

@@ -22,9 +22,8 @@ func main() {
 	}
 	opts := web.ProfileTestOptions{
 		GroupName:     "Default",
-		SpeedTestMode: *mode,        //  pingonly speedonly all
-		PingMethod:    "googleping", // googleping
-		SortMethod:    "rspeed",     // speed rspeed ping rping
+		SpeedTestMode: *mode,    //  pingonly speedonly all
+		SortMethod:    "rspeed", // speed rspeed ping rping
 		Concurrency:   2,
 		TestMode:      2, // 2: ALLTEST 3: RETEST
 		Subscription:  *link,

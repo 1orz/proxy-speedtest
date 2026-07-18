@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { TestNode, TestOptions, WebSocketMessage } from '@/types'
 
 interface TestState {
@@ -48,17 +49,16 @@ const defaultOptions: TestOptions = {
   unique: true,
   groupname: '',
   speedtestMode: 'all',
-  pingMethod: 'googleping',
   sortMethod: 'rspeed',
   language: 'en',
   fontSize: 24,
   theme: 'rainbow',
   testMode: 2,
-  downloadSize: '',
+  downloadSize: 'cloudflare100',
   downloadUrl: '',
 }
 
-export const useTestStore = create<TestState>((set, get) => ({
+export const useTestStore = create<TestState>()(persist((set, get) => ({
   loading: false,
   result: [],
   testCount: 0,
@@ -216,6 +216,18 @@ export const useTestStore = create<TestState>((set, get) => ({
           set({ loading: false })
         }
         break
+    }
+  },
+}), {
+  // 仅持久化用户填写的配置项,便于下次复用;测试结果/连接等瞬时状态不落盘
+  name: 'litespeedtest-options',
+  partialize: (state) => ({ options: state.options }),
+  // 用默认值补齐历史存档中缺失的字段,避免新增选项时读到 undefined
+  merge: (persisted, current) => {
+    const p = (persisted ?? {}) as Partial<TestState>
+    return {
+      ...current,
+      options: { ...current.options, ...(p.options ?? {}) },
     }
   },
 }))

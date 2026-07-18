@@ -19,6 +19,7 @@ import (
 
 var (
 	port         = flag.Int("p", 8090, "set port")
+	bind         = flag.String("bind", "", "bind web server to an address or interface name, e.g. 100.x.x.x or tailscale0 (empty = all interfaces)")
 	test         = flag.String("test", "", "test from command line with subscription link or file")
 	conf         = flag.String("config", "", "config file path (JSON format)")
 	grpc         = flag.Bool("grpc", false, "start grpc server")
@@ -70,7 +71,7 @@ func main() {
 
 	// Start gRPC server
 	if *grpc {
-		if err := grpcServer.StartServer(uint16(*port)); err != nil {
+		if err := grpcServer.StartServer(uint16(*port), *bind); err != nil {
 			log.Fatalln(err)
 		}
 		return
@@ -98,7 +99,7 @@ func main() {
 	if len(os.Args) < 2 {
 		*port = 10888
 	}
-	if err := webServer.ServeFile(*port); err != nil {
+	if err := webServer.ServeFile(*port, *bind); err != nil {
 		log.Fatalln(err)
 	}
 }

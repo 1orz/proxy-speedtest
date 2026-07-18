@@ -59,7 +59,6 @@ func (s *server) StartTest(req *pb.TestRequest, stream pb.TestProxy_StartTestSer
 		Options: &web.ProfileTestOptions{
 			GroupName:     groupName,
 			SpeedTestMode: speedTestMode,
-			PingMethod:    "googleping",
 			SortMethod:    sortMethod,
 			Concurrency:   int(concurrency),
 			TestMode:      2,
@@ -97,8 +96,12 @@ func (s *server) StartTest(req *pb.TestRequest, stream pb.TestProxy_StartTestSer
 	return nil
 }
 
-func StartServer(port uint16) error {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+func StartServer(port uint16, bind string) error {
+	host, err := web.ResolveBindAddress(bind)
+	if err != nil {
+		return err
+	}
+	lis, err := net.Listen("tcp", net.JoinHostPort(host, fmt.Sprintf("%d", port)))
 	if err != nil {
 		return err
 	}

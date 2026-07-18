@@ -1,11 +1,10 @@
 import { useState, useCallback, useEffect, type DragEvent } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
-import { Play, Square, Upload, X, Settings2, FileText, Wand2 } from 'lucide-react'
+import { Play, Square, Upload, X, Settings2, FileText } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Select,
   SelectContent,
@@ -13,8 +12,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
 import { useTestStore } from '@/store/test-store'
-import type { SpeedTestMode, PingMethod } from '@/types'
+import type { SpeedTestMode } from '@/types'
+
+// 下载测速端点预设。key 必须与后端 download.GetDownloadURL 的 case 保持一致,
+// url 仅用于前端只读展示"当前测速链接",让用户清楚测的是哪个目标。
+const DOWNLOAD_ENDPOINTS = [
+  { key: 'cloudflare100', label: 'Cloudflare 100MB', url: 'https://speed.cloudflare.com/__down?bytes=100000000' },
+  { key: 'cloudflare200', label: 'Cloudflare 200MB', url: 'https://speed.cloudflare.com/__down?bytes=200000000' },
+  { key: 'cachefly100', label: 'Cachefly 100MB', url: 'http://cachefly.cachefly.net/100mb.test' },
+  { key: 'hetzner100', label: 'Hetzner 100MB（美国）', url: 'https://ash-speed.hetzner.com/100MB.bin' },
+  { key: 'thinkbroadband100', label: 'ThinkBroadband 100MB（英国）', url: 'http://ipv4.download.thinkbroadband.com/100MB.zip' },
+] as const
+
+const CONCURRENCY_PRESETS = [1, 3, 5] as const
+
+// 三段切换的测试项:左 Ping Only / 中 测速 + Tcping / 右 Speed Only
+const TEST_MODES: { value: SpeedTestMode; label: string }[] = [
+  { value: 'pingonly', label: 'Ping Only' },
+  { value: 'all', label: '测速 + Tcping' },
+  { value: 'speedonly', label: 'Speed Only' },
+]
 
 export function TestForm() {
   const {
@@ -27,11 +46,9 @@ export function TestForm() {
     send,
   } = useTestStore()
 
-  const [activeTab, setActiveTab] = useState('basic')
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [fileContent, setFileContent] = useState('')
   const [isDragging, setIsDragging] = useState(false)
-  const [generateJSON, setGenerateJSON] = useState('')
 
   const handleFileUpload = useCallback((file: File) => {
     if (file.size > 10 * 1024 * 1024) {
@@ -42,10 +59,12 @@ export function TestForm() {
     reader.onloadend = () => {
       setFileContent(reader.result as string)
       setUploadedFile(file)
-      setOptions({ subscription: file.name })
+      // 注意:不把文件名写进 options.subscription。subscription 会被持久化到 localStorage,
+      // 而文件内容(fileContent)是非持久化的组件状态;若写入文件名,刷新后会残留一个
+      // 无法使用的裸文件名,误导用户并导致后端解析失败。上传态改用 uploadedFile 判定。
     }
     reader.readAsText(file)
-  }, [setOptions])
+  }, [])
 
   const handleDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -66,68 +85,71 @@ export function TestForm() {
   const clearFile = useCallback(() => {
     setUploadedFile(null)
     setFileContent('')
-    setOptions({ subscription: '' })
-  }, [setOptions])
+  }, [])
 
   const handleSubmit = useCallback(() => {
-    if (!options.subscription) {
+    if (!uploadedFile && !options.subscription) {
       alert('请输入订阅链接或上传配置文件')
+      return
+    }
+    if (options.downloadSize === 'custom' && !options.downloadUrl.trim()) {
+      alert('已选择“自定义 URL”，请填写测速下载直链')
       return
     }
 
     reset()
     useTestStore.setState({ loading: true })
 
-    const wsUrl = `ws://${window.location.host}/test`
-    connect(wsUrl)
+    const payload = JSON.stringify({
+      testMode: 2,
+      subscription: uploadedFile ? fileContent : options.subscription,
+      group: options.groupname || '?empty?',
+      speedtestMode: options.speedtestMode,
+      sortMethod: options.sortMethod,
+      unique: options.unique,
+      concurrency: options.concurrency,
+      timeout: options.timeout,
+      language: options.language,
+      fontSize: options.fontSize,
+      theme: options.theme,
+      downloadSize: options.downloadSize,
+      downloadUrl: options.downloadUrl,
+    })
 
-    // 等待连接建立后发送数据
+    // 按页面协议选择 ws/wss,HTTPS 部署下才不会被混合内容策略拦截
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    connect(`${proto}//${window.location.host}/test`)
+
+    // 等待连接建立后发送;连接失败(ws 被 onerror/onclose 置空)或超过重试上限即停止,
+    // 避免原先"永远 100ms 轮询"造成的死循环与定时器泄漏。
+    let attempts = 0
     const checkAndSend = () => {
       const ws = useTestStore.getState().ws
       if (ws && ws.readyState === WebSocket.OPEN) {
-        const data = {
-          testMode: 2,
-          subscription: uploadedFile ? fileContent : options.subscription,
-          group: options.groupname || '?empty?',
-          speedtestMode: options.speedtestMode,
-          pingMethod: options.pingMethod,
-          sortMethod: options.sortMethod,
-          unique: options.unique,
-          concurrency: options.concurrency,
-          timeout: options.timeout,
-          language: options.language,
-          fontSize: options.fontSize,
-          theme: options.theme,
-          downloadSize: options.downloadSize,
-          downloadUrl: options.downloadUrl,
-        }
-        send(JSON.stringify(data))
-      } else {
-        setTimeout(checkAndSend, 100)
+        send(payload)
+        return
       }
+      if (!ws || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+        useTestStore.setState({ loading: false })
+        return
+      }
+      if (++attempts > 50) {
+        disconnect()
+        alert('连接测速服务失败，请重试')
+        return
+      }
+      setTimeout(checkAndSend, 100)
     }
     checkAndSend()
-  }, [options, uploadedFile, fileContent, reset, connect, send])
+  }, [options, uploadedFile, fileContent, reset, connect, send, disconnect])
 
   const handleTerminate = useCallback(() => {
     disconnect()
     reset()
   }, [disconnect, reset])
 
-  const handleGenerateResult = useCallback(async () => {
-    if (!generateJSON) return
-    try {
-      const response = await fetch(`${window.location.protocol}//${window.location.host}/generateResult`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: generateJSON,
-      })
-      const data = await response.text()
-      useTestStore.setState({ picdata: data })
-    } catch (error) {
-      console.error('Generate result failed:', error)
-    }
-  }, [generateJSON])
+  const currentEndpointUrl =
+    DOWNLOAD_ENDPOINTS.find((e) => e.key === options.downloadSize)?.url ?? ''
 
   return (
     <motion.div
@@ -142,399 +164,214 @@ export function TestForm() {
             测速配置
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-6">
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-4 mb-6">
-              <TabsTrigger value="basic" className="gap-2">
-                <Settings2 className="w-4 h-4" />
-                基础
-              </TabsTrigger>
-              <TabsTrigger value="advanced" className="gap-2">
-                <Wand2 className="w-4 h-4" />
-                高级
-              </TabsTrigger>
-              <TabsTrigger value="export" className="gap-2">
-                <FileText className="w-4 h-4" />
-                导出
-              </TabsTrigger>
-              <TabsTrigger value="generate" className="gap-2">
-                <Wand2 className="w-4 h-4" />
-                生成
-              </TabsTrigger>
-            </TabsList>
+        <CardContent className="p-6 space-y-6">
+          {/* 订阅链接输入 */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-muted-foreground">订阅链接</label>
+            <Input
+              value={uploadedFile ? uploadedFile.name : options.subscription}
+              onChange={(e) => setOptions({ subscription: e.target.value })}
+              placeholder="支持 V2Ray/Trojan/SS/SSR/Clash/VLESS 订阅链接"
+              disabled={loading || !!uploadedFile}
+            />
+          </div>
 
-            <TabsContent value="basic" className="space-y-6">
-              <BasicSettings
-                options={options}
-                setOptions={setOptions}
-                loading={loading}
-                uploadedFile={uploadedFile}
-                isDragging={isDragging}
+          {/* 文件上传区域 */}
+          <AnimatePresence mode="wait">
+            {!uploadedFile && !options.subscription && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
-                onFileUpload={handleFileUpload}
-                onClearFile={clearFile}
-              />
-              <ActionButtons
-                loading={loading}
-                onSubmit={handleSubmit}
-                onTerminate={handleTerminate}
-              />
-            </TabsContent>
-
-            <TabsContent value="advanced" className="space-y-6">
-              <BasicSettings
-                options={options}
-                setOptions={setOptions}
-                loading={loading}
-                uploadedFile={uploadedFile}
-                isDragging={isDragging}
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onFileUpload={handleFileUpload}
-                onClearFile={clearFile}
-              />
-              <AdvancedSettings options={options} setOptions={setOptions} loading={loading} />
-              <ActionButtons
-                loading={loading}
-                onSubmit={handleSubmit}
-                onTerminate={handleTerminate}
-              />
-            </TabsContent>
-
-            <TabsContent value="export" className="space-y-6">
-              <ExportSettings options={options} setOptions={setOptions} />
-            </TabsContent>
-
-            <TabsContent value="generate" className="space-y-6">
-              <div className="space-y-4">
-                <label className="text-sm font-medium text-muted-foreground">结果数据 (JSON)</label>
-                <textarea
-                  value={generateJSON}
-                  onChange={(e) => setGenerateJSON(e.target.value)}
-                  placeholder="粘贴测速结果 JSON 数据..."
-                  className="w-full h-48 rounded-lg border border-input bg-secondary/50 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                className={`
+                  relative border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200
+                  ${isDragging ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}
+                `}
+              >
+                <input
+                  type="file"
+                  onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  disabled={loading}
                 />
-                <Button onClick={handleGenerateResult} disabled={!generateJSON || loading}>
-                  <Wand2 className="w-4 h-4 mr-2" />
-                  生成图片
+                <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  拖拽配置文件到此处，或<span className="text-primary cursor-pointer">点击上传</span>
+                </p>
+              </motion.div>
+            )}
+
+            {uploadedFile && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="flex items-center justify-between p-4 rounded-lg bg-secondary/50 border border-border"
+              >
+                <div className="flex items-center gap-3">
+                  <FileText className="w-5 h-5 text-primary" />
+                  <span className="text-sm font-medium">{uploadedFile.name}</span>
+                </div>
+                <Button variant="ghost" size="icon" onClick={clearFile} disabled={loading}>
+                  <X className="w-4 h-4" />
                 </Button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* 并发数:预设 1/3/5 + 自定义 */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-muted-foreground">并发数</label>
+            <div className="flex flex-wrap items-center gap-2">
+              {CONCURRENCY_PRESETS.map((n) => (
+                <Button
+                  key={n}
+                  type="button"
+                  size="sm"
+                  variant={options.concurrency === n ? 'default' : 'outline'}
+                  onClick={() => setOptions({ concurrency: n })}
+                  disabled={loading}
+                  className="w-12"
+                >
+                  {n}
+                </Button>
+              ))}
+              <div className="flex items-center gap-2 pl-2">
+                <span className="text-xs text-muted-foreground">自定义</span>
+                <NumberField
+                  min={1}
+                  max={50}
+                  fallback={2}
+                  value={options.concurrency}
+                  onChange={(n) => setOptions({ concurrency: n })}
+                  disabled={loading}
+                  className="w-24"
+                />
               </div>
-            </TabsContent>
-          </Tabs>
+            </div>
+          </div>
+
+          {/* 测试项:三段切换 */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-muted-foreground">测试项</label>
+            <div className="grid grid-cols-3 gap-1 rounded-lg bg-secondary/50 p-1">
+              {TEST_MODES.map((m) => (
+                <button
+                  key={m.value}
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setOptions({ speedtestMode: m.value })}
+                  className={cn(
+                    'rounded-md px-3 py-2 text-sm font-medium transition-all disabled:opacity-50 disabled:pointer-events-none',
+                    options.speedtestMode === m.value
+                      ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/25'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 测试时长 + 去重 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-muted-foreground">测试时长 (秒)</label>
+              <NumberField
+                min={5}
+                max={60}
+                fallback={15}
+                value={options.timeout}
+                onChange={(n) => setOptions({ timeout: n })}
+                disabled={loading}
+              />
+            </div>
+            <div className="flex items-end pb-2.5">
+              <div className="flex items-center gap-3">
+                <Checkbox
+                  id="unique"
+                  checked={options.unique}
+                  onCheckedChange={(checked) => setOptions({ unique: !!checked })}
+                  disabled={loading}
+                />
+                <label htmlFor="unique" className="text-sm font-medium cursor-pointer">
+                  去除重复节点
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* 自定义组名 */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-muted-foreground">自定义组名</label>
+            <Input
+              value={options.groupname}
+              onChange={(e) => setOptions({ groupname: e.target.value })}
+              placeholder="可选，留空使用默认值"
+              disabled={loading}
+            />
+          </div>
+
+          {/* 下载测速端点 */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-muted-foreground">下载测速端点</label>
+            <Select
+              value={options.downloadSize}
+              onValueChange={(v) => {
+                if (v === 'custom') {
+                  setOptions({ downloadSize: 'custom' })
+                } else {
+                  setOptions({ downloadSize: v, downloadUrl: '' })
+                }
+              }}
+              disabled={loading}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DOWNLOAD_ENDPOINTS.map((e) => (
+                  <SelectItem key={e.key} value={e.key}>
+                    {e.label}
+                  </SelectItem>
+                ))}
+                <SelectItem value="custom">自定义 URL</SelectItem>
+              </SelectContent>
+            </Select>
+            {options.downloadSize === 'custom' ? (
+              <Input
+                value={options.downloadUrl}
+                onChange={(e) => setOptions({ downloadUrl: e.target.value })}
+                placeholder="https://example.com/100mb.bin （需可通过代理访问的大文件直链）"
+                disabled={loading}
+                className="font-mono text-xs"
+              />
+            ) : (
+              <Input
+                value={currentEndpointUrl}
+                readOnly
+                tabIndex={-1}
+                aria-label="当前测速链接"
+                className="font-mono text-xs text-muted-foreground cursor-not-allowed focus-visible:ring-0"
+              />
+            )}
+            <p className="text-xs text-muted-foreground">
+              当前测速链接如上；预设不可修改，选“自定义 URL”后可填写自己的大文件直链。
+            </p>
+          </div>
+
+          <ActionButtons
+            loading={loading}
+            onSubmit={handleSubmit}
+            onTerminate={handleTerminate}
+          />
         </CardContent>
       </Card>
     </motion.div>
-  )
-}
-
-interface SettingsProps {
-  options: {
-    subscription: string
-    concurrency: number
-    timeout: number
-    unique: boolean
-    groupname: string
-    speedtestMode: SpeedTestMode
-    pingMethod: PingMethod
-    sortMethod: 'rspeed' | 'speed' | 'ping' | 'rping' | 'none'
-    language: 'en' | 'cn'
-    fontSize: number
-    theme: 'rainbow' | 'original'
-    downloadSize: string
-    downloadUrl: string
-  }
-  setOptions: (options: Partial<SettingsProps['options']>) => void
-  loading?: boolean
-}
-
-interface BasicSettingsProps extends SettingsProps {
-  uploadedFile: File | null
-  isDragging: boolean
-  onDrop: (e: DragEvent<HTMLDivElement>) => void
-  onDragOver: (e: DragEvent<HTMLDivElement>) => void
-  onDragLeave: () => void
-  onFileUpload: (file: File) => void
-  onClearFile: () => void
-}
-
-function BasicSettings({
-  options,
-  setOptions,
-  loading,
-  uploadedFile,
-  isDragging,
-  onDrop,
-  onDragOver,
-  onDragLeave,
-  onFileUpload,
-  onClearFile,
-}: BasicSettingsProps) {
-  return (
-    <div className="space-y-6">
-      {/* 订阅链接输入 */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-muted-foreground">订阅链接</label>
-        <Input
-          value={uploadedFile ? uploadedFile.name : options.subscription}
-          onChange={(e) => setOptions({ subscription: e.target.value })}
-          placeholder="支持 V2Ray/Trojan/SS/SSR/Clash/VLESS 订阅链接"
-          disabled={loading || !!uploadedFile}
-        />
-      </div>
-
-      {/* 文件上传区域 */}
-      <AnimatePresence mode="wait">
-        {!uploadedFile && !options.subscription && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            onDrop={onDrop}
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            className={`
-              relative border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200
-              ${isDragging ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}
-            `}
-          >
-            <input
-              type="file"
-              onChange={(e) => e.target.files?.[0] && onFileUpload(e.target.files[0])}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              disabled={loading}
-            />
-            <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              拖拽配置文件到此处，或<span className="text-primary cursor-pointer">点击上传</span>
-            </p>
-          </motion.div>
-        )}
-
-        {uploadedFile && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="flex items-center justify-between p-4 rounded-lg bg-secondary/50 border border-border"
-          >
-            <div className="flex items-center gap-3">
-              <FileText className="w-5 h-5 text-primary" />
-              <span className="text-sm font-medium">{uploadedFile.name}</span>
-            </div>
-            <Button variant="ghost" size="icon" onClick={onClearFile} disabled={loading}>
-              <X className="w-4 h-4" />
-            </Button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* 并发数和测试项 */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-muted-foreground">并发数</label>
-          <NumberField
-            min={1}
-            max={50}
-            fallback={2}
-            value={options.concurrency}
-            onChange={(n) => setOptions({ concurrency: n })}
-            disabled={loading}
-          />
-        </div>
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-muted-foreground">测试项</label>
-          <Select
-            value={options.speedtestMode}
-            onValueChange={(v) => setOptions({ speedtestMode: v as SpeedTestMode })}
-            disabled={loading}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部测试</SelectItem>
-              <SelectItem value="pingonly">仅 Ping</SelectItem>
-              <SelectItem value="speedonly">仅速度</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {/* 自定义组名 */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-muted-foreground">自定义组名</label>
-        <Input
-          value={options.groupname}
-          onChange={(e) => setOptions({ groupname: e.target.value })}
-          placeholder="可选，留空使用默认值"
-          disabled={loading}
-        />
-      </div>
-    </div>
-  )
-}
-
-function AdvancedSettings({ options, setOptions, loading }: SettingsProps) {
-  return (
-    <div className="space-y-6 pt-4 border-t border-border/50">
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-muted-foreground">测试时长 (秒)</label>
-          <NumberField
-            min={5}
-            max={60}
-            fallback={15}
-            value={options.timeout}
-            onChange={(n) => setOptions({ timeout: n })}
-            disabled={loading}
-          />
-        </div>
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-muted-foreground">Ping 方式</label>
-          <Select
-            value={options.pingMethod}
-            onValueChange={(v) => setOptions({ pingMethod: v as PingMethod })}
-            disabled={loading}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="googleping">Google Ping</SelectItem>
-              <SelectItem value="tcping">TCP Ping</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3">
-        <Checkbox
-          id="unique"
-          checked={options.unique}
-          onCheckedChange={(checked) => setOptions({ unique: !!checked })}
-          disabled={loading}
-        />
-        <label htmlFor="unique" className="text-sm font-medium cursor-pointer">
-          去除重复节点
-        </label>
-      </div>
-
-      {/* 下载测速端点 */}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-muted-foreground">下载测速端点</label>
-        <Select
-          value={options.downloadSize || 'default'}
-          onValueChange={(v) => {
-            if (v === 'custom') {
-              setOptions({ downloadSize: 'custom' })
-            } else if (v === 'default') {
-              setOptions({ downloadSize: '', downloadUrl: '' })
-            } else {
-              setOptions({ downloadSize: v, downloadUrl: '' })
-            }
-          }}
-          disabled={loading}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="default">默认（自动）</SelectItem>
-            <SelectItem value="cloudflare100">Cloudflare 100MB</SelectItem>
-            <SelectItem value="cloudflare200">Cloudflare 200MB</SelectItem>
-            <SelectItem value="cachefly100">Cachefly 100MB</SelectItem>
-            <SelectItem value="hetzner100">Hetzner 100MB（美国）</SelectItem>
-            <SelectItem value="thinkbroadband100">ThinkBroadband 100MB（英国）</SelectItem>
-            <SelectItem value="custom">自定义 URL</SelectItem>
-          </SelectContent>
-        </Select>
-        {options.downloadSize === 'custom' && (
-          <Input
-            value={options.downloadUrl}
-            onChange={(e) => setOptions({ downloadUrl: e.target.value })}
-            placeholder="https://example.com/100mb.bin （需可通过代理访问的大文件直链）"
-            disabled={loading}
-            className="mt-2"
-          />
-        )}
-        <p className="text-xs text-muted-foreground">
-          用于速度测试的下载目标；预设为公开测速端点，也可自定义。
-        </p>
-      </div>
-    </div>
-  )
-}
-
-function ExportSettings({ options, setOptions }: SettingsProps) {
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-muted-foreground">语言</label>
-          <Select
-            value={options.language}
-            onValueChange={(v) => setOptions({ language: v as 'en' | 'cn' })}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="en">English</SelectItem>
-              <SelectItem value="cn">中文</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-muted-foreground">字体大小</label>
-          <NumberField
-            min={12}
-            max={36}
-            fallback={24}
-            value={options.fontSize}
-            onChange={(n) => setOptions({ fontSize: n })}
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-muted-foreground">排序方式</label>
-          <Select
-            value={options.sortMethod}
-            onValueChange={(v) => setOptions({ sortMethod: v as typeof options.sortMethod })}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="rspeed">速度倒序</SelectItem>
-              <SelectItem value="speed">速度顺序</SelectItem>
-              <SelectItem value="rping">Ping 倒序</SelectItem>
-              <SelectItem value="ping">Ping 顺序</SelectItem>
-              <SelectItem value="none">默认</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-muted-foreground">主题</label>
-          <Select
-            value={options.theme}
-            onValueChange={(v) => setOptions({ theme: v as 'rainbow' | 'original' })}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="rainbow">Rainbow</SelectItem>
-              <SelectItem value="original">Original</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-    </div>
   )
 }
 
@@ -547,6 +384,7 @@ function NumberField({
   fallback,
   onChange,
   disabled,
+  className,
 }: {
   value: number
   min: number
@@ -554,6 +392,7 @@ function NumberField({
   fallback: number
   onChange: (n: number) => void
   disabled?: boolean
+  className?: string
 }) {
   const [text, setText] = useState(String(value))
 
@@ -568,6 +407,7 @@ function NumberField({
       max={max}
       value={text}
       disabled={disabled}
+      className={className}
       onChange={(e) => {
         setText(e.target.value)
         const n = parseInt(e.target.value, 10)
@@ -626,4 +466,3 @@ function ActionButtons({ loading, onSubmit, onTerminate }: ActionButtonsProps) {
     </div>
   )
 }
-
