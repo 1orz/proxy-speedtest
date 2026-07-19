@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/1orz/proxy-speedtest/common/pool"
@@ -15,37 +17,46 @@ import (
 )
 
 const (
+	// 微软 CDN 上的 dotnetfx35.exe(~231MB),仅作最终兜底,已验证可用。
 	DownloadLinkDefault = "https://download.microsoft.com/download/2/0/E/20E90413-712F-438C-988E-FDAA79A8AC3D/dotnetfx35.exe"
-	CloudflareLink100   = "https://speed.cloudflare.com/__down?bytes=100000000"
-	CloudflareLink200   = "https://speed.cloudflare.com/__down?bytes=200000000"
-	CloudflareLink10    = "https://speed.cloudflare.com/__down?bytes=10000000"
-	Cachefly10          = "http://cachefly.cachefly.net/10mb.test"
-	Cachefly100         = "http://cachefly.cachefly.net/100mb.test"
-	HetznerLink100      = "https://ash-speed.hetzner.com/100MB.bin"
-	ThinkBroadband100   = "http://ipv4.download.thinkbroadband.com/100MB.zip"
+	// Cloudflare 全球 Anycast。注意:__down?bytes= 的上限当前为 <1e8(>=1e8 直接 403),
+	// 故取 10MB;文件偏小,建议配合多线程下载充分利用测试时长。
+	CloudflareLink   = "https://speed.cloudflare.com/__down?bytes=10000000"
+	HetznerDE1G      = "https://fsn1-speed.hetzner.com/1GB.bin"
+	HetznerUS1G      = "https://ash-speed.hetzner.com/1GB.bin"
+	LinodeJP100M     = "https://speedtest.tokyo2.linode.com/100MB-tokyo2.bin"
+	VultrSG100M      = "https://sgp-ping.vultr.com/vultr.com.100MB.bin"
+	OVH1G            = "https://proof.ovh.net/files/1Gb.dat"
+	DataPacketUS100M = "http://lax.download.datapacket.com/100mb.bin"
+	// 华为云镜像(~2.3GB Ubuntu ISO),国内有 CDN 节点、海外亦可达。
+	HuaweiCN2G = "https://mirrors.huaweicloud.com/ubuntu-releases/bionic/ubuntu-18.04.6-desktop-amd64.iso"
 )
 
+// GetDownloadURL 把前端/命令行的端点 key 映射到具体下载 URL。key 需与前端
+// DOWNLOAD_ENDPOINTS 保持一致;customURL 非空时优先使用。
 func GetDownloadURL(size string, customURL string) string {
 	if customURL != "" {
 		return customURL
 	}
 	switch size {
-	case "10mb":
-		return Cachefly10
-	case "100mb", "cachefly100":
-		return Cachefly100
-	case "cloudflare10":
-		return CloudflareLink10
-	case "cloudflare100":
-		return CloudflareLink100
-	case "cloudflare200":
-		return CloudflareLink200
-	case "hetzner100":
-		return HetznerLink100
-	case "thinkbroadband100":
-		return ThinkBroadband100
+	case "cloudflare":
+		return CloudflareLink
+	case "hetzner-de":
+		return HetznerDE1G
+	case "hetzner-us":
+		return HetznerUS1G
+	case "linode-jp":
+		return LinodeJP100M
+	case "vultr-sg":
+		return VultrSG100M
+	case "ovh-eu":
+		return OVH1G
+	case "datapacket-us":
+		return DataPacketUS100M
+	case "huawei-cn":
+		return HuaweiCN2G
 	default:
-		return DownloadLinkDefault
+		return CloudflareLink
 	}
 }
 
@@ -122,6 +133,125 @@ func DownloadWithURL(link string, timeout time.Duration, handshakeTimeout time.D
 	return downloadInternal(ctx, option, resultChan, startChan, dialer.DialContext)
 }
 
+// DownloadWithURLThreads 用 threads 条并行连接下载并聚合总吞吐。每条连接在超时前不断重新
+// 请求同一 URL,因此即便是很小的文件也能持续占满整个测试时长;上报给 resultChan 的每秒样本
+// 是所有线程之和,返回值为峰值每秒聚合速度。threads <= 1 时退回单连接实现(保留原有快速失败行为)。
+//
+// ctx 为调用方上下文:客户端断开/用户点终止时取消它,本次下载(含全部 worker)会立即停止,
+// 避免协程与代理连接泄漏。注意:threads 是"单个节点测速内部的并行连接数",与"并发数"(同时
+// 测多少个节点)是两个不同维度。
+func DownloadWithURLThreads(ctx context.Context, link string, timeout time.Duration, handshakeTimeout time.Duration, resultChan chan<- int64, startChan chan<- time.Time, downloadURL string, threads int) (int64, error) {
+	dialer, err := createDialer(link)
+	if err != nil {
+		return 0, err
+	}
+	defer dialer.Close()
+	if downloadURL == "" {
+		downloadURL = DownloadLinkDefault
+	}
+
+	// 下载上下文派生自调用方 ctx,并叠加本次测速超时;调用方取消会一并终止下载。
+	dlCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	if threads <= 1 {
+		option := DownloadOption{
+			DownloadTimeout:  timeout,
+			HandshakeTimeout: handshakeTimeout,
+			URL:              downloadURL,
+		}
+		return downloadInternal(dlCtx, option, resultChan, startChan, dialer.DialContext)
+	}
+
+	var counter atomic.Int64
+	var wg sync.WaitGroup
+	for i := 0; i < threads; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			transport := &http.Transport{DialContext: dialer.DialContext}
+			defer transport.CloseIdleConnections()
+			client := &http.Client{Transport: transport}
+			buf := pool.Get(20 * 1024)
+			defer pool.Put(buf)
+			for dlCtx.Err() == nil {
+				req, err := http.NewRequestWithContext(dlCtx, "GET", downloadURL, nil)
+				if err != nil {
+					return
+				}
+				resp, err := client.Do(req)
+				if err != nil {
+					// 连接/请求失败:短暂退避后重试,直到超时或被取消
+					select {
+					case <-dlCtx.Done():
+						return
+					case <-time.After(200 * time.Millisecond):
+						continue
+					}
+				}
+				for dlCtx.Err() == nil {
+					nr, er := resp.Body.Read(buf)
+					if nr > 0 {
+						counter.Add(int64(nr))
+					}
+					if er != nil {
+						break
+					}
+				}
+				resp.Body.Close()
+			}
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	start := time.Now()
+	if startChan != nil {
+		startChan <- start
+	}
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var max int64
+	var total int64
+	flush := func() {
+		v := counter.Swap(0)
+		if v <= 0 {
+			return
+		}
+		total += v
+		if v > max {
+			max = v
+		}
+		if resultChan != nil {
+			// 发送也受 dlCtx 约束:调用方取消/读取方退出后不会永久阻塞
+			select {
+			case resultChan <- v:
+			case <-dlCtx.Done():
+			}
+		}
+	}
+	for {
+		select {
+		case <-ticker.C:
+			flush()
+			// 所有线程持续失败(始终 0 字节)时,最多等 ~5s 即判失败,避免对死节点空转满时长
+			if total == 0 && time.Since(start) >= 5*time.Second {
+				return 0, nil
+			}
+		case <-done:
+			flush()
+			return max, nil
+		case <-dlCtx.Done():
+			flush()
+			return max, nil
+		}
+	}
+}
+
 func downloadInternal(ctx context.Context, option DownloadOption, resultChan chan<- int64, startOuterChan chan<- time.Time, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) (int64, error) {
 	var max int64 = 0
 	httpTransport := &http.Transport{}
@@ -129,7 +259,7 @@ func downloadInternal(ctx context.Context, option DownloadOption, resultChan cha
 	if dialContext != nil {
 		httpTransport.DialContext = dialContext
 	}
-	req, err := http.NewRequest("GET", option.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", option.URL, nil)
 	if err != nil {
 		return max, err
 	}
@@ -151,11 +281,16 @@ func downloadInternal(ctx context.Context, option DownloadOption, resultChan cha
 		now := time.Now()
 		if now.Sub(prev) >= time.Second || er != nil {
 			prev = now
-			if resultChan != nil {
-				resultChan <- total
-			}
 			if max < total {
 				max = total
+			}
+			if resultChan != nil {
+				// 发送受 ctx 约束:调用方取消/读取方退出后不会永久阻塞
+				select {
+				case resultChan <- total:
+				case <-ctx.Done():
+					return max, nil
+				}
 			}
 			total = 0
 		}
@@ -173,7 +308,7 @@ func DownloadComplete(link string, timeout time.Duration, handshakeTimeout time.
 		return 0, err
 	}
 	defer dialer.Close()
-	return downloadCompleteInternal(ctx, Cachefly100, timeout, handshakeTimeout, dialer.DialContext)
+	return downloadCompleteInternal(ctx, CloudflareLink, timeout, handshakeTimeout, dialer.DialContext)
 }
 
 func downloadCompleteInternal(ctx context.Context, url string, timeout time.Duration, handshakeTimeout time.Duration, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) (int64, error) {

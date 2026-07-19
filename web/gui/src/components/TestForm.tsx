@@ -19,14 +19,20 @@ import type { SpeedTestMode } from '@/types'
 // 下载测速端点预设。key 必须与后端 download.GetDownloadURL 的 case 保持一致,
 // url 仅用于前端只读展示"当前测速链接",让用户清楚测的是哪个目标。
 const DOWNLOAD_ENDPOINTS = [
-  { key: 'cloudflare100', label: 'Cloudflare 100MB', url: 'https://speed.cloudflare.com/__down?bytes=100000000' },
-  { key: 'cloudflare200', label: 'Cloudflare 200MB', url: 'https://speed.cloudflare.com/__down?bytes=200000000' },
-  { key: 'cachefly100', label: 'Cachefly 100MB', url: 'http://cachefly.cachefly.net/100mb.test' },
-  { key: 'hetzner100', label: 'Hetzner 100MB（美国）', url: 'https://ash-speed.hetzner.com/100MB.bin' },
-  { key: 'thinkbroadband100', label: 'ThinkBroadband 100MB（英国）', url: 'http://ipv4.download.thinkbroadband.com/100MB.zip' },
+  { key: 'cloudflare', label: 'Cloudflare（全球 Anycast · 10MB，建议配多线程）', url: 'https://speed.cloudflare.com/__down?bytes=10000000' },
+  { key: 'hetzner-de', label: 'Hetzner 德国（1GB）', url: 'https://fsn1-speed.hetzner.com/1GB.bin' },
+  { key: 'hetzner-us', label: 'Hetzner 美国（1GB）', url: 'https://ash-speed.hetzner.com/1GB.bin' },
+  { key: 'linode-jp', label: 'Linode 东京（100MB）', url: 'https://speedtest.tokyo2.linode.com/100MB-tokyo2.bin' },
+  { key: 'vultr-sg', label: 'Vultr 新加坡（100MB）', url: 'https://sgp-ping.vultr.com/vultr.com.100MB.bin' },
+  { key: 'ovh-eu', label: 'OVH 欧洲（1GB）', url: 'https://proof.ovh.net/files/1Gb.dat' },
+  { key: 'datapacket-us', label: 'DataPacket 美国（100MB）', url: 'http://lax.download.datapacket.com/100mb.bin' },
+  { key: 'huawei-cn', label: '华为云镜像 · 国内（2.3GB）', url: 'https://mirrors.huaweicloud.com/ubuntu-releases/bionic/ubuntu-18.04.6-desktop-amd64.iso' },
 ] as const
 
+const DEFAULT_ENDPOINT = 'cloudflare'
+
 const CONCURRENCY_PRESETS = [1, 3, 5] as const
+const THREAD_PRESETS = [1, 2, 4, 8, 16, 32, 64, 128] as const
 
 // 三段切换的测试项:左 Ping Only / 中 测速 + Tcping / 右 Speed Only
 const TEST_MODES: { value: SpeedTestMode; label: string }[] = [
@@ -49,6 +55,14 @@ export function TestForm() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [fileContent, setFileContent] = useState('')
   const [isDragging, setIsDragging] = useState(false)
+
+  // 迁移旧版持久化里已失效/更名的端点 key(如 cloudflare100/cloudflare200/cachefly100 已被替换)
+  useEffect(() => {
+    const known = DOWNLOAD_ENDPOINTS.some((e) => e.key === options.downloadSize)
+    if (options.downloadSize !== 'custom' && !known) {
+      setOptions({ downloadSize: DEFAULT_ENDPOINT, downloadUrl: '' })
+    }
+  }, [options.downloadSize, setOptions])
 
   const handleFileUpload = useCallback((file: File) => {
     if (file.size > 10 * 1024 * 1024) {
@@ -108,6 +122,7 @@ export function TestForm() {
       sortMethod: options.sortMethod,
       unique: options.unique,
       concurrency: options.concurrency,
+      threads: options.threads,
       timeout: options.timeout,
       language: options.language,
       fontSize: options.fontSize,
@@ -224,7 +239,10 @@ export function TestForm() {
 
           {/* 并发数:预设 1/3/5 + 自定义 */}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">并发数</label>
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <label className="text-sm font-medium text-muted-foreground">并发数</label>
+              <span className="text-xs text-muted-foreground">同时测试的节点数量</span>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               {CONCURRENCY_PRESETS.map((n) => (
                 <Button
@@ -251,6 +269,29 @@ export function TestForm() {
                   className="w-24"
                 />
               </div>
+            </div>
+          </div>
+
+          {/* 下载线程数:单节点测速内的并行连接数(与"并发数"是两个维度) */}
+          <div className="space-y-2">
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <label className="text-sm font-medium text-muted-foreground">下载线程数</label>
+              <span className="text-xs text-muted-foreground">单个节点测速时的并行连接数,聚合吞吐;小文件端点靠多线程跑满时长</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {THREAD_PRESETS.map((n) => (
+                <Button
+                  key={n}
+                  type="button"
+                  size="sm"
+                  variant={options.threads === n ? 'default' : 'outline'}
+                  onClick={() => setOptions({ threads: n })}
+                  disabled={loading}
+                  className="w-12"
+                >
+                  {n}
+                </Button>
+              ))}
             </div>
           </div>
 

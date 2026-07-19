@@ -286,7 +286,8 @@ type ProfileTestOptions struct {
 	OutputFilePath  string        `json:"outputFilePath,omitempty"` // output file path for JSON result
 	OutputPicPath   string        `json:"outputPicPath,omitempty"`  // output pic path (can be used with JSON output)
 	DownloadURL     string        `json:"downloadUrl"`              // custom download URL for speed test
-	DownloadSize    string        `json:"downloadSize"`             // 10mb, 100mb, or custom
+	DownloadSize    string        `json:"downloadSize"`             // endpoint preset key (see download.GetDownloadURL)
+	Threads         int           `json:"threads"`                  // parallel download connections per node (1 = single thread)
 }
 
 type CMDOptions struct {
@@ -297,6 +298,7 @@ type CMDOptions struct {
 	OutputPicPath string // output pic path (can be used with any output mode)
 	DownloadURL   string
 	DownloadSize  string
+	Threads       int    // parallel download connections per node
 	Mode          string // pingonly, speedonly, all
 }
 
@@ -324,6 +326,12 @@ func parseMessage(message []byte) ([]string, *ProfileTestOptions, error) {
 	}
 	if options.Concurrency < 1 {
 		options.Concurrency = 1
+	}
+	if options.Threads < 1 {
+		options.Threads = 1
+	}
+	if options.Threads > 256 {
+		options.Threads = 256
 	}
 	if options.TestMode == RETEST {
 		return options.Links, options, nil
@@ -654,7 +662,7 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 		nodeChan <- node
 	}(ch, startCh)
 	downloadURL := download.GetDownloadURL(p.Options.DownloadSize, p.Options.DownloadURL)
-	speed, err := download.DownloadWithURL(link, p.Options.Timeout, p.Options.Timeout, ch, startCh, downloadURL)
+	speed, err := download.DownloadWithURLThreads(ctx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, downloadURL, p.Options.Threads)
 	if speed < 1 {
 		p.WriteMessage(getMsgByte(index, "gotspeed", -1, -1, 0))
 	}

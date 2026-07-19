@@ -45,6 +45,7 @@ interface TestState {
 const defaultOptions: TestOptions = {
   subscription: '',
   concurrency: 2,
+  threads: 1,
   timeout: 15,
   unique: true,
   groupname: '',
@@ -54,7 +55,7 @@ const defaultOptions: TestOptions = {
   fontSize: 24,
   theme: 'rainbow',
   testMode: 2,
-  downloadSize: 'cloudflare100',
+  downloadSize: 'cloudflare',
   downloadUrl: '',
 }
 

@@ -15,6 +15,7 @@ export interface TestNode {
 export interface TestOptions {
   subscription: string
   concurrency: number
+  threads: number
   timeout: number
   unique: boolean
   groupname: string

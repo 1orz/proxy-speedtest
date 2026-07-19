@@ -30,7 +30,8 @@ var (
 	outputFile   = flag.String("output-file", "", "output file path for JSON result")
 	outputPic    = flag.String("output-pic", "", "output pic path (can be used with any output format)")
 	downloadURL  = flag.String("download-url", "", "custom download URL for speed test")
-	downloadSize = flag.String("download-size", "", "download size: 10mb, 100mb, or custom URL bytes param")
+	downloadSize = flag.String("download-size", "", "download endpoint preset key (cloudflare, hetzner-de, hetzner-us, linode-jp, vultr-sg, ovh-eu, datapacket-us, huawei-cn)")
+	threads      = flag.Int("threads", 1, "parallel download connections per node speed test (1=single thread)")
 	mode         = flag.String("mode", "all", "test mode: pingonly, speedonly, all")
 )
 
@@ -61,6 +62,7 @@ func main() {
 			OutputPicPath: *outputPic,
 			DownloadURL:   *downloadURL,
 			DownloadSize:  *downloadSize,
+			Threads:       *threads,
 			Mode:          *mode,
 		}
 		if err := webServer.TestFromCMD(*test, conf, cmdOpts); err != nil {
@@ -87,6 +89,7 @@ func main() {
 			OutputPicPath: *outputPic,
 			DownloadURL:   *downloadURL,
 			DownloadSize:  *downloadSize,
+			Threads:       *threads,
 			Mode:          *mode,
 		}
 		if err := webServer.TestFromCMD(link, conf, cmdOpts); err != nil {

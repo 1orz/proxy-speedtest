@@ -217,6 +217,12 @@ func TestFromCMD(subscription string, configPath *string, cmdOpts *CMDOptions) e
 		if cmdOpts.DownloadSize != "" {
 			options.DownloadSize = cmdOpts.DownloadSize
 		}
+		if cmdOpts.Threads > 0 {
+			options.Threads = cmdOpts.Threads
+			if options.Threads > 256 {
+				options.Threads = 256
+			}
+		}
 		// test mode: pingonly, speedonly, all
 		switch cmdOpts.Mode {
 		case "pingonly":
