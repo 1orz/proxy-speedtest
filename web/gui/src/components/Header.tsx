@@ -31,7 +31,7 @@ export function Header() {
           </motion.div>
           
           <motion.a
-            href="https://github.com/xxf098/LiteSpeedTest"
+            href="https://github.com/1orz/proxy-speedtest"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors"

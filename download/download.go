@@ -206,8 +206,11 @@ func downloadCompleteInternal(ctx context.Context, url string, timeout time.Dura
 		}
 	}
 
-	now := time.Now()
-	max = total * 1000 / now.Sub(start).Milliseconds()
+	elapsedMs := time.Since(start).Milliseconds()
+	if elapsedMs < 1 {
+		elapsedMs = 1
+	}
+	max = total * 1000 / elapsedMs
 	return max, nil
 }
 

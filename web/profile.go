@@ -616,8 +616,15 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 					break Loop
 				}
 				sum += speed
-				duration := float64(time.Since(start)/time.Millisecond) / float64(1000)
-				avg = int64(float64(sum) / duration)
+				// 平均速度用毫秒整数运算,并对耗时取下限 1ms。
+				// 原实现 float64(sum)/duration 在样本于 <1ms 内到达时 duration 为 0,
+				// 得到 +Inf,int64(+Inf) 在 amd64/arm64 上等于 math.MinInt64
+				// (-9223372036854775808),导致平均速度显示为该垃圾值。
+				elapsedMs := time.Since(start).Milliseconds()
+				if elapsedMs < 1 {
+					elapsedMs = 1
+				}
+				avg = sum * 1000 / elapsedMs
 				if max < speed {
 					max = speed
 				}

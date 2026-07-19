@@ -24,12 +24,12 @@ function App() {
         <p>
           Powered by{' '}
           <a
-            href="https://github.com/xxf098/LiteSpeedTest"
+            href="https://github.com/1orz/proxy-speedtest"
             target="_blank"
             rel="noopener noreferrer"
             className="text-primary hover:underline"
           >
-            LiteSpeedTest
+            proxy-speedtest
           </a>
         </p>
       </footer>
