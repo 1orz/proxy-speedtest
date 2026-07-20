@@ -27,9 +27,11 @@ type Message struct {
 	Group    string    `json:"group,omitempty"`
 	Ping     int64     `json:"ping,omitempty"`
 	Lost     string    `json:"lost,omitempty"`
-	Speed    string    `json:"speed,omitempty"`
-	MaxSpeed string    `json:"maxspeed,omitempty"`
-	Traffic  int64     `json:"traffic,omitempty"`
+	Speed          string `json:"speed,omitempty"`
+	MaxSpeed       string `json:"maxspeed,omitempty"`
+	UploadSpeed    string `json:"uploadspeed,omitempty"`
+	MaxUploadSpeed string `json:"maxuploadspeed,omitempty"`
+	Traffic        int64  `json:"traffic,omitempty"`
 	Link     string    `json:"link,omitempty"`
 	Protocol string    `json:"protocol,omitempty"`
 	PicData  string    `json:"data,omitempty"`
@@ -102,6 +104,32 @@ func getMsgByte(id int, typ string, option ...interface{}) []byte {
 		}
 		if maxspeed < 1 {
 			msg.MaxSpeed = "N/A"
+		}
+	case "gotupload":
+		var speed int64
+		var maxspeed int64
+		var traffic int64
+		if len(option) > 1 {
+			if v, ok := option[0].(int64); ok {
+				speed = v
+			}
+			if v, ok := option[1].(int64); ok {
+				maxspeed = v
+			}
+			if len(option) > 2 {
+				if v, ok := option[2].(int64); ok {
+					traffic = v
+				}
+			}
+		}
+		msg.UploadSpeed = strings.TrimRight(download.ByteCountIEC(speed), "/s")
+		msg.MaxUploadSpeed = strings.TrimRight(download.ByteCountIEC(maxspeed), "/s")
+		msg.Traffic = traffic
+		if speed < 1 {
+			msg.UploadSpeed = "N/A"
+		}
+		if maxspeed < 1 {
+			msg.MaxUploadSpeed = "N/A"
 		}
 	case "picdata":
 		if len(option) > 0 {

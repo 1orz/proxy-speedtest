@@ -288,6 +288,9 @@ type ProfileTestOptions struct {
 	DownloadURL     string        `json:"downloadUrl"`              // custom download URL for speed test
 	DownloadSize    string        `json:"downloadSize"`             // endpoint preset key (see download.GetDownloadURL)
 	Threads         int           `json:"threads"`                  // parallel download connections per node (1 = single thread)
+	UploadEnable    bool          `json:"uploadEnable"`             // also test upload speed after download
+	UploadURL       string        `json:"uploadUrl"`                // custom upload URL (POST sink); optional
+	UploadSize      string        `json:"uploadSize"`               // upload endpoint preset key (see download.GetUploadURL)
 }
 
 type CMDOptions struct {
@@ -332,6 +335,9 @@ func parseMessage(message []byte) ([]string, *ProfileTestOptions, error) {
 	}
 	if options.Threads > 256 {
 		options.Threads = 256
+	}
+	if options.UploadSize == "" {
+		options.UploadSize = "cloudflare"
 	}
 	if options.TestMode == RETEST {
 		return options.Links, options, nil
@@ -607,27 +613,63 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 		nodeChan <- node
 		return err
 	}
-	err = p.WriteMessage(getMsgByte(index, "startspeed"))
+	p.WriteMessage(getMsgByte(index, "startspeed"))
+	downloadURL := download.GetDownloadURL(p.Options.DownloadSize, p.Options.DownloadURL)
+	dAvg, dMax, dSum := p.runSpeedPhase(ctx, index, remarks, "gotspeed", trafficChan,
+		func(runCtx context.Context, ch chan<- int64, startCh chan<- time.Time) (int64, error) {
+			return download.DownloadWithURLThreads(runCtx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, downloadURL, p.Options.Threads)
+		})
+
+	// 上传阶段(可选,串行于下载之后;PingOnly 已在 pingLink 提前返回,不会到这里)。
+	// ctx 已取消(用户终止/断开)时跳过,避免发出多余的 startupload 并空转建连。
+	var uAvg, uMax int64
+	if p.Options.UploadEnable && ctx.Err() == nil {
+		p.WriteMessage(getMsgByte(index, "startupload"))
+		uploadURL := download.GetUploadURL(p.Options.UploadSize, p.Options.UploadURL)
+		uAvg, uMax, _ = p.runSpeedPhase(ctx, index, remarks, "gotupload", trafficChan,
+			func(runCtx context.Context, ch chan<- int64, startCh chan<- time.Time) (int64, error) {
+				return download.UploadWithURLThreads(runCtx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, uploadURL, p.Options.Threads)
+			})
+	}
+
+	node := render.Node{
+		Id:             index,
+		Group:          p.Options.GroupName,
+		Remarks:        remarks,
+		Protocol:       protocol,
+		Ping:           fmt.Sprintf("%d", elapse),
+		AvgSpeed:       dAvg,
+		MaxSpeed:       dMax,
+		UploadSpeed:    uAvg,
+		MaxUploadSpeed: uMax,
+		Success:        true,
+		Traffic:        dSum,
+	}
+	nodeChan <- node
+	return nil
+}
+
+// runSpeedPhase 消费一路每秒样本 channel,发对应实时消息(gotspeed/gotupload),
+// 返回该方向的 avg/max/sum。run 负责把样本喂进 ch(DownloadWithURLThreads / UploadWithURLThreads)。
+// 生命周期:run 返回后 close(ch),<-done 保证消费协程排空缓冲并结束;avg/max/sum 的读取
+// happens-after <-done,无竞态、无早投 Node、无 goroutine 泄漏。
+func (p *ProfileTest) runSpeedPhase(ctx context.Context, index int, remarks, msgType string, trafficChan chan<- int64,
+	run func(ctx context.Context, ch chan<- int64, startCh chan<- time.Time) (int64, error)) (avg, max, sum int64) {
 	ch := make(chan int64, 1)
 	startCh := make(chan time.Time, 1)
-	defer close(ch)
-	go func(ch <-chan int64, startChan <-chan time.Time) {
-		var max int64
-		var sum int64
-		var avg int64
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
 		start := time.Now()
-	Loop:
 		for {
 			select {
 			case speed, ok := <-ch:
 				if !ok || speed < 0 {
-					break Loop
+					return
 				}
 				sum += speed
-				// 平均速度用毫秒整数运算,并对耗时取下限 1ms。
-				// 原实现 float64(sum)/duration 在样本于 <1ms 内到达时 duration 为 0,
-				// 得到 +Inf,int64(+Inf) 在 amd64/arm64 上等于 math.MinInt64
-				// (-9223372036854775808),导致平均速度显示为该垃圾值。
+				// 平均速度用毫秒整数运算并对耗时取下限 1ms,避免 <1ms 内到达样本时
+				// float64/0 得 +Inf、int64(+Inf)=MinInt64 的垃圾值。
 				elapsedMs := time.Since(start).Milliseconds()
 				if elapsedMs < 1 {
 					elapsedMs = 1
@@ -636,37 +678,29 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 				if max < speed {
 					max = speed
 				}
-				slog.Debug("speed sample", "index", index, "remarks", remarks, "speed", download.ByteCountIEC(speed))
-				err = p.WriteMessage(getMsgByte(index, "gotspeed", avg, max, speed))
+				slog.Debug("speed sample", "index", index, "remarks", remarks, "dir", msgType, "speed", download.ByteCountIEC(speed))
+				p.WriteMessage(getMsgByte(index, msgType, avg, max, speed))
 				if trafficChan != nil {
-					trafficChan <- speed
+					select {
+					case trafficChan <- speed:
+					case <-ctx.Done():
+					}
 				}
-			case s := <-startChan:
+			case s := <-startCh:
 				start = s
 			case <-ctx.Done():
-				slog.Debug("speed test cancelled", "index", index)
-				break Loop
+				slog.Debug("speed test cancelled", "index", index, "dir", msgType)
+				return
 			}
 		}
-		node := render.Node{
-			Id:       index,
-			Group:    p.Options.GroupName,
-			Remarks:  remarks,
-			Protocol: protocol,
-			Ping:     fmt.Sprintf("%d", elapse),
-			AvgSpeed: avg,
-			MaxSpeed: max,
-			Success:  true,
-			Traffic:  sum,
-		}
-		nodeChan <- node
-	}(ch, startCh)
-	downloadURL := download.GetDownloadURL(p.Options.DownloadSize, p.Options.DownloadURL)
-	speed, err := download.DownloadWithURLThreads(ctx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, downloadURL, p.Options.Threads)
+	}()
+	speed, _ := run(ctx, ch, startCh)
+	close(ch)
+	<-done
 	if speed < 1 {
-		p.WriteMessage(getMsgByte(index, "gotspeed", -1, -1, 0))
+		p.WriteMessage(getMsgByte(index, msgType, -1, -1, 0))
 	}
-	return err
+	return avg, max, sum
 }
 
 func (p *ProfileTest) pingLink(index int, link string) (int64, error) {

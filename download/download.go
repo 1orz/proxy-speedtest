@@ -3,6 +3,7 @@ package download
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -30,6 +31,12 @@ const (
 	DataPacketUS100M = "http://lax.download.datapacket.com/100mb.bin"
 	// 华为云镜像(~2.3GB Ubuntu ISO),国内有 CDN 节点、海外亦可达。
 	HuaweiCN2G = "https://mirrors.huaweicloud.com/ubuntu-releases/bionic/ubuntu-18.04.6-desktop-amd64.iso"
+
+	// 上传测速端点(POST 接收即丢弃 body)。可用的公共 sink 稀缺:
+	// CloudflareUpLink 为 anycast 就近、无大小上限、纯丢弃(响应 0 字节),首选;
+	// DLPTestUpLink 为美国固定、返回 {"ok":true} 小响应,备选。
+	CloudflareUpLink = "https://speed.cloudflare.com/__up"
+	DLPTestUpLink    = "https://dlptest.com/api/http-post/"
 )
 
 // GetDownloadURL 把前端/命令行的端点 key 映射到具体下载 URL。key 需与前端
@@ -57,6 +64,22 @@ func GetDownloadURL(size string, customURL string) string {
 		return HuaweiCN2G
 	default:
 		return CloudflareLink
+	}
+}
+
+// GetUploadURL 把上传端点 key 映射到具体 URL。key 需与前端 UPLOAD_ENDPOINTS 一致;
+// customURL 非空时优先使用。
+func GetUploadURL(size string, customURL string) string {
+	if customURL != "" {
+		return customURL
+	}
+	switch size {
+	case "cloudflare":
+		return CloudflareUpLink
+	case "dlptest":
+		return DLPTestUpLink
+	default:
+		return CloudflareUpLink
 	}
 }
 
@@ -250,6 +273,155 @@ func DownloadWithURLThreads(ctx context.Context, link string, timeout time.Durat
 		case <-ticker.C:
 			flush()
 			// 所有线程持续失败(始终 0 字节)时,最多等 ~5s 即判失败,避免对死节点空转满时长
+			if total == 0 && time.Since(start) >= 5*time.Second {
+				return 0, nil
+			}
+		case <-done:
+			flush()
+			return max, nil
+		case <-dlCtx.Done():
+			flush()
+			return max, nil
+		}
+	}
+}
+
+// zeroBlock 是上传 body 的只读零字节源(并发只读,安全);内容无所谓,测的是吞吐。
+var zeroBlock = make([]byte, 32*1024)
+
+// uploadChunkBytes 是单次 POST 上传的固定大小。用固定 Content-Length(而非 chunked)兼容
+// CF __up 与 DLPTest;每块完成后仅在响应 2xx 时才把本次字节计入吞吐,避免坏端点/限流的失败
+// 上传贡献虚假速度、并使死节点(total==0)判定失效(与下载先验状态码再计数对称)。
+const uploadChunkBytes = 4 * 1024 * 1024
+
+// uploadBody 是单次上传请求的 body:被 http.Client 读取时吐出零字节并累加本次的 sent 计数,
+// 发满 remaining 或 ctx 取消后返回 io.EOF。计数发生在 Read(交给 transport)时刻,受 TCP 流控
+// 回压,约等于实际发送速率。
+type uploadBody struct {
+	ctx       context.Context
+	sent      *atomic.Int64
+	remaining int64
+}
+
+func (b *uploadBody) Read(p []byte) (int, error) {
+	if b.ctx.Err() != nil {
+		return 0, io.EOF
+	}
+	if b.remaining <= 0 {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if int64(n) > b.remaining {
+		n = int(b.remaining)
+	}
+	for i := 0; i < n; {
+		i += copy(p[i:n], zeroBlock)
+	}
+	b.remaining -= int64(n)
+	b.sent.Add(int64(n))
+	return n, nil
+}
+
+// UploadWithURLThreads 对称于 DownloadWithURLThreads:threads 个并行 POST 把零字节流上传到
+// uploadURL(接收即丢弃型端点,如 Cloudflare __up),atomic 聚合每秒吞吐,返回峰值每秒速度。
+// ctx 取消会终止全部上传 worker。
+func UploadWithURLThreads(ctx context.Context, link string, timeout time.Duration, handshakeTimeout time.Duration, resultChan chan<- int64, startChan chan<- time.Time, uploadURL string, threads int) (int64, error) {
+	dialer, err := createDialer(link)
+	if err != nil {
+		return 0, err
+	}
+	defer dialer.Close()
+	if uploadURL == "" {
+		uploadURL = CloudflareUpLink
+	}
+	if threads < 1 {
+		threads = 1
+	}
+
+	dlCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var counter atomic.Int64
+	var wg sync.WaitGroup
+	for i := 0; i < threads; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			transport := &http.Transport{DialContext: dialer.DialContext}
+			defer transport.CloseIdleConnections()
+			client := &http.Client{Transport: transport}
+			for dlCtx.Err() == nil {
+				var sent atomic.Int64
+				req, err := http.NewRequestWithContext(dlCtx, "POST", uploadURL, &uploadBody{ctx: dlCtx, sent: &sent, remaining: uploadChunkBytes})
+				if err != nil {
+					return
+				}
+				req.ContentLength = uploadChunkBytes // 固定 Content-Length,避免 chunked 被部分端点拒绝
+				req.Header.Set("Content-Type", "application/octet-stream")
+				req.Header.Set("User-Agent", "Mozilla/5.0")
+				resp, err := client.Do(req)
+				if err != nil {
+					// 连接/发送失败(含 ctx 取消致 body 短于 Content-Length):本次不计入,退避重试
+					select {
+					case <-dlCtx.Done():
+						return
+					case <-time.After(200 * time.Millisecond):
+						continue
+					}
+				}
+				ok := resp.StatusCode >= 200 && resp.StatusCode < 300
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				if ok {
+					// 仅成功上传才计入吞吐;失败页/限流的字节不计,死端点 total 保持 0 可被判失败
+					counter.Add(sent.Load())
+				} else {
+					select {
+					case <-dlCtx.Done():
+						return
+					case <-time.After(500 * time.Millisecond):
+						continue
+					}
+				}
+			}
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	start := time.Now()
+	if startChan != nil {
+		startChan <- start
+	}
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var max int64
+	var total int64
+	flush := func() {
+		v := counter.Swap(0)
+		if v <= 0 {
+			return
+		}
+		total += v
+		if v > max {
+			max = v
+		}
+		if resultChan != nil {
+			select {
+			case resultChan <- v:
+			case <-dlCtx.Done():
+			}
+		}
+	}
+	for {
+		select {
+		case <-ticker.C:
+			flush()
+			// 所有线程持续失败(始终 0 字节)时最多等 ~5s 即判失败,避免对死节点空转满时长
 			if total == 0 && time.Since(start) >= 5*time.Second {
 				return 0, nil
 			}

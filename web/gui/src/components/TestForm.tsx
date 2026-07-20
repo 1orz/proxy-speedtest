@@ -31,6 +31,13 @@ const DOWNLOAD_ENDPOINTS = [
 
 const DEFAULT_ENDPOINT = 'cloudflare'
 
+// 上传测速端点(POST 接收即丢弃)。key 必须与后端 download.GetUploadURL 的 case 一致。
+// 可用的公共 sink 稀缺:CF __up 为 Anycast 就近、首选;DLPTest 为美国固定备选。
+const UPLOAD_ENDPOINTS = [
+  { key: 'cloudflare', label: 'Cloudflare __up（全球 Anycast · 就近,首选）', url: 'https://speed.cloudflare.com/__up' },
+  { key: 'dlptest', label: 'DLPTest（美国,备选）', url: 'https://dlptest.com/api/http-post/' },
+] as const
+
 const CONCURRENCY_PRESETS = [1, 3, 5] as const
 const THREAD_PRESETS = [1, 2, 4, 8, 16, 32, 64, 128] as const
 
@@ -129,6 +136,8 @@ export function TestForm() {
       theme: options.theme,
       downloadSize: options.downloadSize,
       downloadUrl: options.downloadUrl,
+      uploadEnable: options.uploadEnable && options.speedtestMode !== 'pingonly',
+      uploadSize: options.uploadSize,
     })
 
     // 按页面协议选择 ws/wss,HTTPS 部署下才不会被混合内容策略拦截
@@ -403,6 +412,56 @@ export function TestForm() {
             <p className="text-xs text-muted-foreground">
               当前测速链接如上；预设不可修改，选“自定义 URL”后可填写自己的大文件直链。
             </p>
+          </div>
+
+          {/* 上传测速:独立开关(仅测速模式可用,pingonly 下不适用) */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-3 flex-wrap">
+              <Checkbox
+                id="uploadEnable"
+                checked={options.uploadEnable && options.speedtestMode !== 'pingonly'}
+                onCheckedChange={(checked) => setOptions({ uploadEnable: !!checked })}
+                disabled={loading || options.speedtestMode === 'pingonly'}
+              />
+              <label htmlFor="uploadEnable" className="text-sm font-medium cursor-pointer">
+                测上传速度
+              </label>
+              <span className="text-xs text-muted-foreground">
+                {options.speedtestMode === 'pingonly'
+                  ? '（需开启测速项才可用）'
+                  : '在下载之后追加上传测速,会增加每节点耗时'}
+              </span>
+            </div>
+            {options.uploadEnable && options.speedtestMode !== 'pingonly' && (
+              <div className="space-y-2 pl-7">
+                <Select
+                  value={options.uploadSize}
+                  onValueChange={(v) => setOptions({ uploadSize: v })}
+                  disabled={loading}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {UPLOAD_ENDPOINTS.map((e) => (
+                      <SelectItem key={e.key} value={e.key}>
+                        {e.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  value={UPLOAD_ENDPOINTS.find((e) => e.key === options.uploadSize)?.url ?? ''}
+                  readOnly
+                  tabIndex={-1}
+                  aria-label="当前上传链接"
+                  className="font-mono text-xs text-muted-foreground cursor-not-allowed focus-visible:ring-0"
+                />
+                <p className="text-xs text-muted-foreground">
+                  上传端点稀缺(静态端点 POST 会 405);仅这两个为实测可用的丢弃型 sink。
+                </p>
+              </div>
+            )}
           </div>
 
           <ActionButtons

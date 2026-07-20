@@ -11,7 +11,13 @@ interface TestState {
   totalTraffic: number
   totalTime: number
   picdata: string
-  
+
+  // 实时速率(测速进行中,驱动实时表盘)
+  currentTestingId: number | null
+  currentDirection: 'down' | 'up' | null
+  liveDownloadBps: number
+  liveUploadBps: number
+
   // 选择状态
   selectedNodes: TestNode[]
   
@@ -57,6 +63,8 @@ const defaultOptions: TestOptions = {
   testMode: 2,
   downloadSize: 'cloudflare',
   downloadUrl: '',
+  uploadEnable: false,
+  uploadSize: 'cloudflare',
 }
 
 export const useTestStore = create<TestState>()(persist((set, get) => ({
@@ -67,6 +75,10 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
   totalTraffic: 0,
   totalTime: 0,
   picdata: '',
+  currentTestingId: null,
+  currentDirection: null,
+  liveDownloadBps: 0,
+  liveUploadBps: 0,
   selectedNodes: [],
   ws: null,
   options: defaultOptions,
@@ -103,6 +115,10 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
     totalTraffic: 0,
     totalTime: 0,
     picdata: '',
+    currentTestingId: null,
+    currentDirection: null,
+    liveDownloadBps: 0,
+    liveUploadBps: 0,
     selectedNodes: [],
   }),
 
@@ -182,6 +198,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
         }
         break
       case 'startping':
+        set({ currentTestingId: id })
         state.updateNode(id, { ping: '测试中...', testing: true })
         break
       case 'gotping':
@@ -189,17 +206,31 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
         if (json.ping && json.ping > 0) {
           state.incrementTestOkCount()
         }
-        state.updateNode(id, { ping: json.ping || 0, testing: false })
+        // 不置 testing:false:测速/上传阶段仍在进行,保持高亮直到 endone(修复每秒闪烁)
+        state.updateNode(id, { ping: json.ping || 0 })
         break
       case 'startspeed':
+        set({ currentTestingId: id, currentDirection: 'down', liveDownloadBps: 0 })
         state.updateNode(id, { speed: '测试中...', maxspeed: '测试中...', testing: true })
         break
       case 'gotspeed':
         state.addTraffic(json.traffic || 0)
+        set({ currentTestingId: id, currentDirection: 'down', liveDownloadBps: json.traffic || 0 })
         state.updateNode(id, {
           speed: json.speed || 'N/A',
           maxspeed: json.maxspeed || 'N/A',
-          testing: false,
+        })
+        break
+      case 'startupload':
+        set({ currentTestingId: id, currentDirection: 'up', liveUploadBps: 0 })
+        state.updateNode(id, { uploadspeed: '测试中...', maxuploadspeed: '测试中...', testing: true })
+        break
+      case 'gotupload':
+        state.addTraffic(json.traffic || 0)
+        set({ currentTestingId: id, currentDirection: 'up', liveUploadBps: json.traffic || 0 })
+        state.updateNode(id, {
+          uploadspeed: json.uploadspeed || 'N/A',
+          maxuploadspeed: json.maxuploadspeed || 'N/A',
         })
         break
       case 'endone':
@@ -209,7 +240,18 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
         state.setPicdata(json.data || '')
         break
       case 'eof':
-        set({ loading: false })
+        set((s) => ({
+          loading: false,
+          currentTestingId: null,
+          currentDirection: null,
+          liveDownloadBps: 0,
+          liveUploadBps: 0,
+          // 兜底:清掉任何残留 testing:true 的节点(若某 id 的 endone 未送达),
+          // 否则该行的选择复选框会永久禁用
+          result: s.result.some((n) => n.testing)
+            ? s.result.map((n) => (n.testing ? { ...n, testing: false } : n))
+            : s.result,
+        }))
         break
       case 'error':
         console.error('Error:', json.reason)

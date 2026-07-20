@@ -1,19 +1,24 @@
+import { AnimatePresence } from 'motion/react'
 import { Header } from '@/components/Header'
 import { TestForm } from '@/components/TestForm'
+import { LiveMeter } from '@/components/LiveMeter'
 import { Dashboard } from '@/components/Dashboard'
 import { ResultTable } from '@/components/ResultTable'
 import { ResultImage } from '@/components/ResultImage'
 import { useTimer } from '@/hooks/useTimer'
+import { useTestStore } from '@/store/test-store'
 
 function App() {
   useTimer()
+  const loading = useTestStore((s) => s.loading)
 
   return (
     <div className="min-h-screen gradient-bg grid-pattern">
       <Header />
-      
+
       <main className="container mx-auto px-4 pb-12 space-y-6">
         <TestForm />
+        <AnimatePresence>{loading && <LiveMeter key="live-meter" />}</AnimatePresence>
         <Dashboard />
         <ResultTable />
         <ResultImage />

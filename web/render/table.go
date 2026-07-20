@@ -72,8 +72,12 @@ type Node struct {
 	Ping     string `en:"Ping" cn:"Ping" json:"ping"`
 	AvgSpeed int64  `en:"AvgSpeed" cn:"平均速度" json:"avgSpeed"`
 	MaxSpeed int64  `en:"MaxSpeed" cn:"最大速度" json:"maxSpeed"`
-	Success  bool   `json:"success"`
-	Traffic  int64  `json:"traffic"`
+	// 上传速度不带 en:/cn: tag:故意不进 getNodeHeaders,PNG 表格布局(6 列硬编码)保持不变,
+	// 上传仅走 WS 实时 + 网页表格 + JSON 输出。
+	UploadSpeed    int64 `json:"uploadSpeed"`
+	MaxUploadSpeed int64 `json:"maxUploadSpeed"`
+	Success        bool  `json:"success"`
+	Traffic        int64 `json:"traffic"`
 	Link     string `json:"link,omitempty"` // api only
 }
 

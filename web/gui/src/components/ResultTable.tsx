@@ -33,6 +33,9 @@ export function ResultTable() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
   const [qrDialogOpen, setQrDialogOpen] = useState(false)
 
+  // 仅当有节点测过上传时才显示上传列,避免默认(未开上传)出现空列
+  const hasUpload = result.some((n) => !!n.uploadspeed)
+
   const columns = useMemo<ColumnDef<TestNode>[]>(
     () => [
       {
@@ -164,8 +167,58 @@ export function ResultTable() {
         },
         size: 120,
       },
+      ...(hasUpload
+        ? ([
+            {
+              accessorKey: 'uploadspeed',
+              header: '上传速度',
+              cell: ({ row }) => {
+                const speed = row.original.uploadspeed ?? ''
+                const speedValue = getSpeed(speed)
+                const color = !isNaN(speedValue) && speedValue > 0 ? getSpeedColor(speedValue, options.theme) : undefined
+                return (
+                  <span
+                    className={cn('font-mono px-2 py-1 rounded', row.original.testing && 'animate-pulse text-primary')}
+                    style={color ? { backgroundColor: color, color: '#000' } : undefined}
+                  >
+                    {speed || '-'}
+                  </span>
+                )
+              },
+              sortingFn: (a, b) => {
+                const sa = getSpeed(a.original.uploadspeed ?? '')
+                const sb = getSpeed(b.original.uploadspeed ?? '')
+                return (isNaN(sb) ? -1 : sb) - (isNaN(sa) ? -1 : sa)
+              },
+              size: 120,
+            },
+            {
+              accessorKey: 'maxuploadspeed',
+              header: '最大上传',
+              cell: ({ row }) => {
+                const speed = row.original.maxuploadspeed ?? ''
+                const speedValue = getSpeed(speed)
+                const color = !isNaN(speedValue) && speedValue > 0 ? getSpeedColor(speedValue, options.theme) : undefined
+                return (
+                  <span
+                    className={cn('font-mono px-2 py-1 rounded', row.original.testing && 'animate-pulse text-primary')}
+                    style={color ? { backgroundColor: color, color: '#000' } : undefined}
+                  >
+                    {speed || '-'}
+                  </span>
+                )
+              },
+              sortingFn: (a, b) => {
+                const sa = getSpeed(a.original.maxuploadspeed ?? '')
+                const sb = getSpeed(b.original.maxuploadspeed ?? '')
+                return (isNaN(sb) ? -1 : sb) - (isNaN(sa) ? -1 : sa)
+              },
+              size: 120,
+            },
+          ] as ColumnDef<TestNode>[])
+        : []),
     ],
-    [options.theme]
+    [options.theme, hasUpload]
   )
 
   const table = useReactTable({

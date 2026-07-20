@@ -9,6 +9,8 @@ export interface TestNode {
   ping: number | string
   speed: string
   maxspeed: string
+  uploadspeed?: string
+  maxuploadspeed?: string
   testing?: boolean
 }
 
@@ -27,6 +29,8 @@ export interface TestOptions {
   testMode: number
   downloadSize: string
   downloadUrl: string
+  uploadEnable: boolean
+  uploadSize: string
 }
 
 export interface WebSocketMessage {
@@ -39,6 +43,8 @@ export interface WebSocketMessage {
   lost?: string
   speed?: string
   maxspeed?: string
+  uploadspeed?: string
+  maxuploadspeed?: string
   traffic?: number
   link?: string
   protocol?: string
