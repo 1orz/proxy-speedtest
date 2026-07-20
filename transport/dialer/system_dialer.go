@@ -2,11 +2,10 @@ package dialer
 
 import (
 	"errors"
+	"log/slog"
 	"net"
 	"syscall"
 	"time"
-
-	"github.com/1orz/proxy-speedtest/log"
 )
 
 type controller func(network, address string, fd uintptr) error
@@ -24,7 +23,7 @@ func Dialer() (*net.Dialer, error) {
 				for _, ctl := range controllers {
 					if err := ctl(network, address, fd); err != nil {
 						// errors.New("failed to apply external controller").Base(err).WriteToLog(session.ExportIDToError(ctx))
-						log.E("failed to apply external controller")
+						slog.Error("failed to apply external controller")
 						continue
 					}
 				}

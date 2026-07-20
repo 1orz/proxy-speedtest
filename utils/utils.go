@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"os"
 	"regexp"
@@ -11,7 +12,6 @@ import (
 	"unsafe"
 
 	"github.com/1orz/proxy-speedtest/common"
-	"github.com/1orz/proxy-speedtest/log"
 )
 
 func CheckLink(link string) ([]string, error) {
@@ -41,7 +41,7 @@ func GetListens(ctx context.Context, network, address string) ([]net.Listener, e
 		if err != nil {
 			return nil, err
 		}
-		log.D("server", i, "pid", os.Getpid(), "serving on", listen.Addr())
+		slog.Debug("listener serving", "index", i, "pid", os.Getpid(), "addr", listen.Addr())
 		listens[i] = listen
 	}
 	return listens, nil

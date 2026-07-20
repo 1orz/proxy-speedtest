@@ -2,7 +2,7 @@ package liteserver
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"time"
 
@@ -105,7 +105,7 @@ func StartServer(port uint16, bind string) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("start grpc server at %s", lis.Addr().String())
+	slog.Info("start grpc server", "addr", lis.Addr().String())
 	s := grpc.NewServer()
 	pb.RegisterTestProxyServer(s, &server{})
 	if err := s.Serve(lis); err != nil {

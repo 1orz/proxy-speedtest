@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -102,7 +102,7 @@ func ParseLinks(message string) ([]string, error) {
 func ParseLinksWithOption(message string, opt ParseOption) ([]string, error) {
 	// matched, err := regexp.MatchString(`^(?:https?:\/\/)(?:[^@\/\n]+@)?(?:www\.)?([^:\/\n]+)`, message)
 	if opt.Type == PARSE_URL || utils.IsUrl(message) {
-		log.Println(message)
+		slog.Debug("parsing subscription url", "url", message)
 		return getSubscriptionLinks(message)
 	}
 	// check is file path
@@ -352,7 +352,7 @@ type OutputMessageWriter struct {
 }
 
 func (p *OutputMessageWriter) WriteMessage(messageType int, data []byte) error {
-	log.Println(string(data))
+	slog.Debug("ws message", "data", string(data))
 	return nil
 }
 
@@ -557,7 +557,7 @@ func (p *ProfileTest) savePic(nodes render.Nodes, traffic int64, duration string
 	}
 	msg := table.FormatTraffic(download.ByteCountIECTrim(traffic), duration, fmt.Sprintf("%d/%d", successCount, linksCount))
 	table.Draw(p.Options.OutputPicPath, msg)
-	log.Printf("Pic result saved to %s", p.Options.OutputPicPath)
+	slog.Info("pic result saved", "path", p.Options.OutputPicPath)
 	return nil
 }
 
@@ -592,7 +592,7 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 		protocol = fmt.Sprintf("%s/%s", cfg.Protocol, cfg.Net)
 	}
 	elapse, err := p.pingLink(index, link)
-	log.Printf("%d %s elapse: %dms", index, remarks, elapse)
+	slog.Debug("ping result", "index", index, "remarks", remarks, "elapse_ms", elapse)
 	if err != nil {
 		node := render.Node{
 			Id:       index,
@@ -636,7 +636,7 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 				if max < speed {
 					max = speed
 				}
-				log.Printf("%d %s recv: %s", index, remarks, download.ByteCountIEC(speed))
+				slog.Debug("speed sample", "index", index, "remarks", remarks, "speed", download.ByteCountIEC(speed))
 				err = p.WriteMessage(getMsgByte(index, "gotspeed", avg, max, speed))
 				if trafficChan != nil {
 					trafficChan <- speed
@@ -644,7 +644,7 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 			case s := <-startChan:
 				start = s
 			case <-ctx.Done():
-				log.Printf("index %d done!", index)
+				slog.Debug("speed test cancelled", "index", index)
 				break Loop
 			}
 		}

@@ -1,75 +1,45 @@
+// Package log 是全项目统一日志的引导层,基于标准库 log/slog。
+// 所有业务代码直接调用 slog.Debug/Info/Warn/Error;本包只负责在启动时
+// 配置全局默认 logger 的输出格式与级别(通过 main 的 -log-level)。
 package log
 
 import (
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
+	"strings"
 )
 
-var (
-	logger    = log.New(os.Stdout, "", log.Ldate|log.Ltime)
-	loggerErr = log.New(os.Stderr, "", log.Ldate|log.Ltime)
-	level     = ERROR
-)
+// levelVar 允许运行时调整全局日志级别。
+var levelVar = new(slog.LevelVar)
 
-func SetLevel(newLevel LogLevel) {
-	level = newLevel
+// LevelSilent 高于 Error,用于 "silent" 静默所有日志。
+const LevelSilent = slog.Level(1000)
+
+func init() {
+	// 在 Setup 之前也保证统一格式与合理默认级别(info)。
+	levelVar.Set(slog.LevelInfo)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: levelVar})))
 }
 
-type Message interface {
-	String() string
+// Setup 设置全局日志级别。level 取值:debug/info/warning/error/silent。
+func Setup(level string) {
+	levelVar.Set(ParseLevel(level))
 }
 
-// Write a simple logger
-func Write(msg Message) {
-	logger.Print(msg.String() + "\n")
-}
-
-func D(format string, v ...interface{}) {
-	print(format, v...)
-}
-
-func Debug(format Message, v ...interface{}) {
-	D(format.String(), v...)
-}
-
-func I(format string, v ...interface{}) {
-	if INFO < level {
-		return
+// ParseLevel 把级别字符串映射为 slog.Level(未知值回退 info)。
+func ParseLevel(level string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug":
+		return slog.LevelDebug
+	case "info", "":
+		return slog.LevelInfo
+	case "warning", "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	case "silent", "off", "none":
+		return LevelSilent
+	default:
+		return slog.LevelInfo
 	}
-	print(format, v...)
-}
-
-func W(format string, v ...interface{}) {
-	if WARNING < level {
-		return
-	}
-	print(format, v...)
-}
-
-func Warnln(format string, v ...interface{}) {
-	W(format, v)
-}
-
-func E(format string, v ...interface{}) {
-	printErr(format, v...)
-}
-
-func Error(format Message, v ...interface{}) {
-	E(format.String(), v...)
-}
-
-func print(msg string, args ...interface{}) {
-	// m := fmt.Sprintf(msg, args...)
-	for _, arg := range args {
-		msg += fmt.Sprintf(" %v", arg)
-	}
-	logger.Println(msg)
-}
-
-func printErr(msg string, args ...interface{}) {
-	for _, arg := range args {
-		msg += fmt.Sprintf(" %v", arg)
-	}
-	loggerErr.Println(msg)
 }

@@ -3,7 +3,7 @@ package liteclient
 import (
 	"context"
 	"io"
-	"log"
+	"log/slog"
 
 	pb "github.com/1orz/proxy-speedtest/api/rpc/lite"
 	"github.com/1orz/proxy-speedtest/download"
@@ -33,7 +33,7 @@ func StartClient(addr string, req *pb.TestRequest) ([]*pb.TestReply, error) {
 		if err != nil {
 			return nil, err
 		}
-		log.Println("id: ", reply.Id, reply.Remarks, "ping:", reply.Ping, "avg:", download.ByteCountIECTrim(reply.AvgSpeed), "max:", download.ByteCountIECTrim(reply.MaxSpeed))
+		slog.Info("grpc test result", "id", reply.Id, "remarks", reply.Remarks, "ping", reply.Ping, "avg", download.ByteCountIECTrim(reply.AvgSpeed), "max", download.ByteCountIECTrim(reply.MaxSpeed))
 		result = append(result, reply)
 
 	}

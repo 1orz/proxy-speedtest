@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -28,10 +28,11 @@ var upgrader = websocket.Upgrader{}
 
 func ServeFile(port int, bind string) error {
 	// TODO: Mobile UI
-	http.HandleFunc("/", serverFile)
-	http.HandleFunc("/test", updateTest)
-	http.HandleFunc("/getSubscriptionLink", getSubscriptionLink)
-	http.HandleFunc("/getSubscription", getSubscription)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", serverFile)
+	mux.HandleFunc("/test", updateTest)
+	mux.HandleFunc("/getSubscriptionLink", getSubscriptionLink)
+	mux.HandleFunc("/getSubscription", getSubscription)
 
 	host, err := ResolveBindAddress(bind)
 	if err != nil {
@@ -40,14 +41,14 @@ func ServeFile(port int, bind string) error {
 	// host == "" listens on all interfaces (":port"), preserving previous behaviour
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	if bind == "" {
-		log.Printf("Start server at http://127.0.0.1:%d", port)
+		slog.Info("server started", "url", fmt.Sprintf("http://127.0.0.1:%d", port))
 		if ipAddr, err := localIP(); err == nil {
-			log.Printf("Start server at http://%s", net.JoinHostPort(ipAddr.String(), strconv.Itoa(port)))
+			slog.Info("server started", "url", fmt.Sprintf("http://%s", net.JoinHostPort(ipAddr.String(), strconv.Itoa(port))))
 		}
 	} else {
-		log.Printf("Start server at http://%s (bound to %q)", addr, bind)
+		slog.Info("server started", "url", fmt.Sprintf("http://%s", addr), "bind", bind)
 	}
-	return http.ListenAndServe(addr, nil)
+	return http.ListenAndServe(addr, accessLog(mux))
 }
 
 // ResolveBindAddress turns a user-supplied bind value into a listen host.
@@ -103,7 +104,7 @@ func serverFile(w http.ResponseWriter, r *http.Request) {
 func updateTest(w http.ResponseWriter, r *http.Request) {
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Print("upgrade:", err)
+		slog.Debug("websocket upgrade failed", "err", err)
 		return
 	}
 	defer c.Close()
@@ -112,7 +113,7 @@ func updateTest(w http.ResponseWriter, r *http.Request) {
 	for {
 		mt, message, err := c.ReadMessage()
 		if err != nil {
-			log.Println("read:", err)
+			slog.Debug("websocket read ended", "err", err)
 			break
 		}
 		// log.Printf("recv: %s", message)
@@ -260,7 +261,7 @@ func TestFromCMD(subscription string, configPath *string, cmdOpts *CMDOptions) e
 		}
 	}
 	if jsonOpt, err := json.Marshal(options); err == nil {
-		log.Printf("json options: %s\n", string(jsonOpt))
+		slog.Debug("cmd options", "json", string(jsonOpt))
 	}
 	nodes, err := TestContext(ctx, options, &OutputMessageWriter{})
 	if err != nil {
@@ -292,15 +293,15 @@ func outputJSON(nodes render.Nodes, options ProfileTestOptions) {
 	}
 	data, err := json.MarshalIndent(&jsonOutput, "", "  ")
 	if err != nil {
-		log.Printf("json marshal error: %v", err)
+		slog.Error("json marshal failed", "err", err)
 		return
 	}
 	// output to file if OutputFilePath is set
 	if options.OutputFilePath != "" {
 		if err := os.WriteFile(options.OutputFilePath, data, 0644); err != nil {
-			log.Printf("failed to write JSON to file %s: %v", options.OutputFilePath, err)
+			slog.Error("failed to write JSON file", "path", options.OutputFilePath, "err", err)
 		} else {
-			log.Printf("JSON result saved to %s", options.OutputFilePath)
+			slog.Info("JSON result saved", "path", options.OutputFilePath)
 		}
 	} else {
 		fmt.Println(string(data))

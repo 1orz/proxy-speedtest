@@ -3,9 +3,8 @@ package common
 import (
 	"bufio"
 	"io"
+	"log/slog"
 	"net"
-
-	"github.com/1orz/proxy-speedtest/log"
 )
 
 type RewindReader struct {
@@ -30,7 +29,7 @@ func (r *RewindReader) Read(p []byte) (int, error) {
 	if r.buffering {
 		r.buf = append(r.buf, p[:n]...)
 		if len(r.buf) > r.bufferSize*2 {
-			log.D("read too many bytes!")
+			slog.Debug("rewind reader buffered too many bytes")
 		}
 	}
 	return n, err

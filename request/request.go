@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
+	"sort"
 	"time"
 
 	"github.com/1orz/proxy-speedtest/internal/parser"
@@ -15,7 +17,8 @@ import (
 )
 
 const (
-	remoteHost = "clients3.google.com"
+	remoteHost  = "clients3.google.com"
+	pingSamples = 5 // 每次 ping 的采样次数(预热之外),取中位数以忽略异常样本
 )
 
 var (
@@ -48,23 +51,51 @@ func pingOnce(remoteConn net.Conn) (int64, error) {
 	return elapse.Milliseconds(), nil
 }
 
-// pingInternal performs delay test with warm-up to eliminate first handshake latency
-// Reference: https://github.com/clash-verge-rev/clash-verge-rev
-// The first request includes DNS resolution, TCP handshake, and TLS handshake overhead.
-// By doing a warm-up request first, the second request measures only the actual proxy latency.
-func pingInternal(remoteConn net.Conn) (int64, error) {
+// pingInternal 在同一条已建立的连接上先预热一次(丢弃,消除首次请求的额外开销),
+// 再采样 samples 次,取成功样本的中位数;失败/超时的样本被忽略(异常剔除)。
+// 采样期间给连接设置截止时间(取 ctx 截止与 tcpTimeout 的较早者),避免单次读写挂死。
+func pingInternal(ctx context.Context, remoteConn net.Conn, samples int) (int64, error) {
 	if remoteConn == nil {
 		return 0, errors.New("connection is nil")
 	}
+	if samples < 1 {
+		samples = 1
+	}
 
-	// Warm-up request: eliminate first handshake latency (DNS, TCP, TLS)
-	_, err := pingOnce(remoteConn)
-	if err != nil {
+	deadline := time.Now().Add(tcpTimeout)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	remoteConn.SetDeadline(deadline)
+	defer remoteConn.SetDeadline(time.Time{})
+
+	// 预热请求:消除首次请求(在已建连之上)残留的额外延迟。
+	if _, err := pingOnce(remoteConn); err != nil {
 		return 0, err
 	}
 
-	// Actual delay measurement (connection already established)
-	return pingOnce(remoteConn)
+	results := make([]int64, 0, samples)
+	var lastErr error
+	for i := 0; i < samples; i++ {
+		if ctx.Err() != nil {
+			break
+		}
+		elapse, err := pingOnce(remoteConn)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		results = append(results, elapse)
+	}
+	if len(results) == 0 {
+		if lastErr == nil {
+			lastErr = errors.New("no successful ping sample")
+		}
+		return 0, lastErr
+	}
+	// 取中位数,忽略异常偏大/偶发的样本。
+	sort.Slice(results, func(i, j int) bool { return results[i] < results[j] })
+	return results[len(results)/2], nil
 }
 
 type PingResult struct {
@@ -125,7 +156,7 @@ func PingConfig(ctx context.Context, config *xray.ProxyConfig) (int64, error) {
 	// Create dialer using xray-core
 	dialer, err := xray.NewDialer(config)
 	if err != nil {
-		fmt.Printf("[DEBUG] NewDialer error for %s: %v\n", config.Tag, err)
+		slog.Debug("ping: new dialer failed", "tag", config.Tag, "err", err)
 		return 0, err
 	}
 	defer dialer.Close()
@@ -133,14 +164,14 @@ func PingConfig(ctx context.Context, config *xray.ProxyConfig) (int64, error) {
 	// Dial connection
 	remoteConn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(remoteHost, "80"))
 	if err != nil {
-		fmt.Printf("[DEBUG] DialContext error for %s: %v\n", config.Tag, err)
+		slog.Debug("ping: dial failed", "tag", config.Tag, "err", err)
 		return 0, err
 	}
 	defer remoteConn.Close()
 
-	latency, err := pingInternal(remoteConn)
+	latency, err := pingInternal(ctx, remoteConn, pingSamples)
 	if err != nil {
-		fmt.Printf("[DEBUG] pingInternal error for %s: %v\n", config.Tag, err)
+		slog.Debug("ping: sampling failed", "tag", config.Tag, "err", err)
 	}
 	return latency, err
 }
