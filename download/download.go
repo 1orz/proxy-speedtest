@@ -189,6 +189,17 @@ func DownloadWithURLThreads(ctx context.Context, link string, timeout time.Durat
 						continue
 					}
 				}
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					// 非 2xx(如小文件被 Cloudflare 高频重下限流返回的 403/429):
+					// 不能把错误页字节计入吞吐,退避更久后再试,减轻对端限流压力。
+					resp.Body.Close()
+					select {
+					case <-dlCtx.Done():
+						return
+					case <-time.After(500 * time.Millisecond):
+						continue
+					}
+				}
 				for dlCtx.Err() == nil {
 					nr, er := resp.Body.Read(buf)
 					if nr > 0 {
@@ -268,6 +279,10 @@ func downloadInternal(ctx context.Context, option DownloadOption, resultChan cha
 		return max, err
 	}
 	defer response.Body.Close()
+	// 非 2xx 视为失败,避免把错误页字节计入下载速度。
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return max, nil
+	}
 	prev := time.Now()
 	if startOuterChan != nil {
 		startOuterChan <- prev

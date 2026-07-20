@@ -19,7 +19,7 @@ import type { SpeedTestMode } from '@/types'
 // 下载测速端点预设。key 必须与后端 download.GetDownloadURL 的 case 保持一致,
 // url 仅用于前端只读展示"当前测速链接",让用户清楚测的是哪个目标。
 const DOWNLOAD_ENDPOINTS = [
-  { key: 'cloudflare', label: 'Cloudflare（全球 Anycast · 10MB，建议配多线程）', url: 'https://speed.cloudflare.com/__down?bytes=10000000' },
+  { key: 'cloudflare', label: 'Cloudflare（全球 Anycast · 10MB，单线程首选）', url: 'https://speed.cloudflare.com/__down?bytes=10000000' },
   { key: 'hetzner-de', label: 'Hetzner 德国（1GB）', url: 'https://fsn1-speed.hetzner.com/1GB.bin' },
   { key: 'hetzner-us', label: 'Hetzner 美国（1GB）', url: 'https://ash-speed.hetzner.com/1GB.bin' },
   { key: 'linode-jp', label: 'Linode 东京（100MB）', url: 'https://speedtest.tokyo2.linode.com/100MB-tokyo2.bin' },
@@ -276,7 +276,7 @@ export function TestForm() {
           <div className="space-y-2">
             <div className="flex items-baseline gap-2 flex-wrap">
               <label className="text-sm font-medium text-muted-foreground">下载线程数</label>
-              <span className="text-xs text-muted-foreground">单个节点测速时的并行连接数,聚合吞吐;小文件端点靠多线程跑满时长</span>
+              <span className="text-xs text-muted-foreground">单个节点测速时的并行连接数,聚合吞吐;多线程请配 1GB 端点(Hetzner/OVH),Cloudflare 小文件多线程易被限流</span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {THREAD_PRESETS.map((n) => (
