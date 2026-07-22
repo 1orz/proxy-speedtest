@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,30 +23,66 @@ type PublicIP struct {
 	ISP     string `json:"isp"`
 }
 
-// Geo 返回紧凑归属地串 "国家, 城市, ISP"(缺省字段跳过)。
+// Geo 返回紧凑归属地串 "国家, 省/区, 城市, ISP"(缺省与重复字段跳过)。
 func (p *PublicIP) Geo() string {
 	if p == nil {
 		return ""
 	}
-	parts := make([]string, 0, 3)
-	for _, s := range []string{p.Country, p.City, p.ISP} {
-		if s = strings.TrimSpace(s); s != "" {
-			parts = append(parts, s)
+	var parts []string
+	seen := map[string]bool{}
+	for _, s := range []string{p.Country, p.Region, p.City, p.ISP} {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
 		}
+		seen[s] = true
+		parts = append(parts, s)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// merge 用 src 的非空字段补齐 dst 的缺失字段(dst 已有值优先,不覆盖)。
+func (p *PublicIP) merge(src *PublicIP) {
+	if src == nil {
+		return
+	}
+	if p.IP == "" {
+		p.IP = src.IP
+	}
+	if p.Country == "" {
+		p.Country = src.Country
+	}
+	if p.Region == "" {
+		p.Region = src.Region
+	}
+	if p.City == "" {
+		p.City = src.City
+	}
+	if p.ISP == "" {
+		p.ISP = src.ISP
+	}
 }
 
 // Line 返回图片页脚整行,如 "IPv4: 1.2.3.4 (US, Los Angeles, Cloudflare)"。
 // IP 为空时返回空串(不占位)。
 func (p *PublicIP) Line(label string) string {
-	if p == nil || p.IP == "" {
+	if p == nil {
 		return ""
 	}
-	if geo := p.Geo(); geo != "" {
-		return fmt.Sprintf("%s: %s (%s)", label, p.IP, geo)
+	return ipDisplayLine(label, p.IP, p.Geo())
+}
+
+// ipDisplayLine 由 (标签, IP, 归属地) 拼出展示行;IP 为空返回空串(不占位)。
+// 供前端"重新生成图片"端点复用(那里传的是已拆分的 ip/geo 字段)。
+func ipDisplayLine(label, ip, geo string) string {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return ""
 	}
-	return fmt.Sprintf("%s: %s", label, p.IP)
+	if geo = strings.TrimSpace(geo); geo != "" {
+		return fmt.Sprintf("%s: %s (%s)", label, ip, geo)
+	}
+	return fmt.Sprintf("%s: %s", label, ip)
 }
 
 // familyClient 构造一个把连接强制到指定地址族("tcp4"/"tcp6")的 http.Client,
@@ -85,8 +122,16 @@ func httpGet(ctx context.Context, c *http.Client, url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 }
 
-// providers 按优先级排列;逐个尝试直到取到有效结果(IP 非空且族匹配)。
+// providers 按优先级排列;并发查询后按此顺序合并(靠前者字段冲突时优先)。
+// ipip.net 置顶:对国内 IP 的省/市/运营商更准更细(中文)。
 var providers = []ipProvider{
+	{name: "ipip.net", fetch: func(ctx context.Context, c *http.Client) (*PublicIP, error) {
+		body, err := httpGet(ctx, c, "https://myip.ipip.net/")
+		if err != nil {
+			return nil, err
+		}
+		return parseIPIP(string(body))
+	}},
 	{name: "ip-api.com", fetch: func(ctx context.Context, c *http.Client) (*PublicIP, error) {
 		body, err := httpGet(ctx, c, "http://ip-api.com/json/?fields=status,country,regionName,city,isp,query")
 		if err != nil {
@@ -107,6 +152,55 @@ var providers = []ipProvider{
 			return nil, fmt.Errorf("ip-api: no result")
 		}
 		return &PublicIP{IP: r.Query, Country: r.Country, Region: r.RegionName, City: r.City, ISP: r.ISP}, nil
+	}},
+	{name: "ipwho.is", fetch: func(ctx context.Context, c *http.Client) (*PublicIP, error) {
+		body, err := httpGet(ctx, c, "https://ipwho.is/")
+		if err != nil {
+			return nil, err
+		}
+		var r struct {
+			IP         string `json:"ip"`
+			Success    bool   `json:"success"`
+			Country    string `json:"country"`
+			Region     string `json:"region"`
+			City       string `json:"city"`
+			Connection struct {
+				ISP string `json:"isp"`
+				Org string `json:"org"`
+			} `json:"connection"`
+		}
+		if err := json.Unmarshal(body, &r); err != nil {
+			return nil, err
+		}
+		if !r.Success || r.IP == "" {
+			return nil, fmt.Errorf("ipwho.is: no result")
+		}
+		isp := r.Connection.ISP
+		if isp == "" {
+			isp = r.Connection.Org
+		}
+		return &PublicIP{IP: r.IP, Country: r.Country, Region: r.Region, City: r.City, ISP: isp}, nil
+	}},
+	{name: "ipapi.co", fetch: func(ctx context.Context, c *http.Client) (*PublicIP, error) {
+		body, err := httpGet(ctx, c, "https://ipapi.co/json/")
+		if err != nil {
+			return nil, err
+		}
+		var r struct {
+			IP          string `json:"ip"`
+			City        string `json:"city"`
+			Region      string `json:"region"`
+			CountryName string `json:"country_name"`
+			Org         string `json:"org"`
+			Error       bool   `json:"error"`
+		}
+		if err := json.Unmarshal(body, &r); err != nil {
+			return nil, err
+		}
+		if r.Error || r.IP == "" {
+			return nil, fmt.Errorf("ipapi.co: no result")
+		}
+		return &PublicIP{IP: r.IP, Country: r.CountryName, Region: r.Region, City: r.City, ISP: r.Org}, nil
 	}},
 	{name: "ip.sb", fetch: func(ctx context.Context, c *http.Client) (*PublicIP, error) {
 		body, err := httpGet(ctx, c, "https://api.ip.sb/geoip")
@@ -201,6 +295,41 @@ func parseCipCC(text string) (*PublicIP, error) {
 	return p, nil
 }
 
+// parseIPIP 解析 myip.ipip.net 的纯文本:
+//
+//	当前 IP:61.175.246.226  来自于:中国 浙江 温州 电信
+func parseIPIP(text string) (*PublicIP, error) {
+	// 容错:把可能出现的全角冒号换成半角
+	text = strings.TrimSpace(strings.ReplaceAll(text, "：", ":"))
+	if strings.Contains(text, "<html") || strings.Contains(text, "<!DOCTYPE") {
+		return nil, fmt.Errorf("ipip: html response")
+	}
+	p := &PublicIP{}
+	if i := strings.Index(text, "IP:"); i >= 0 {
+		if fs := strings.Fields(text[i+len("IP:"):]); len(fs) > 0 {
+			p.IP = fs[0]
+		}
+	}
+	if i := strings.Index(text, "来自于:"); i >= 0 {
+		f := strings.Fields(text[i+len("来自于:"):])
+		if len(f) > 0 {
+			p.Country = f[0]
+		}
+		switch {
+		case len(f) >= 4:
+			p.Region, p.City, p.ISP = f[1], f[2], strings.Join(f[3:], " ")
+		case len(f) == 3:
+			p.City, p.ISP = f[1], f[2]
+		case len(f) == 2:
+			p.ISP = f[1]
+		}
+	}
+	if p.IP == "" {
+		return nil, fmt.Errorf("ipip: no ip")
+	}
+	return p, nil
+}
+
 // familyMatch 校验取到的 IP 属于期望的地址族,防止某来源无视连接族回报了另一族地址。
 func familyMatch(ipStr, network string) bool {
 	ip := net.ParseIP(strings.TrimSpace(ipStr))
@@ -213,31 +342,39 @@ func familyMatch(ipStr, network string) bool {
 	return ip.To4() != nil
 }
 
-// fetchPublicIP 在指定地址族上逐个尝试来源,返回第一个有效结果。
+// fetchPublicIP 在指定地址族上并发查询所有来源,再按 providers 优先级顺序合并,
+// 把各源的国家/省区/城市/ISP 补齐成尽可能完整的一条(靠前来源字段冲突时优先)。
+// 并发 → 快;合并所有源 → 更全更准(如国内 IP 由 ipip.net 提供省市)。
 func fetchPublicIP(ctx context.Context, network string) (*PublicIP, error) {
 	client := familyClient(network, 3*time.Second)
-	var lastErr error
-	for _, pv := range providers {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		info, err := pv.fetch(ctx, client)
-		if err != nil {
-			lastErr = err
-			slog.Debug("public ip provider failed", "provider", pv.name, "network", network, "err", err)
-			continue
-		}
-		if !familyMatch(info.IP, network) {
-			lastErr = fmt.Errorf("%s: ip %s not %s", pv.name, info.IP, network)
-			continue
-		}
-		slog.Debug("public ip resolved", "provider", pv.name, "network", network, "ip", info.IP)
-		return info, nil
+	results := make([]*PublicIP, len(providers))
+	var wg sync.WaitGroup
+	for i, pv := range providers {
+		wg.Add(1)
+		go func(i int, pv ipProvider) {
+			defer wg.Done()
+			info, err := pv.fetch(ctx, client)
+			if err != nil {
+				slog.Debug("public ip provider failed", "provider", pv.name, "network", network, "err", err)
+				return
+			}
+			if !familyMatch(info.IP, network) {
+				return
+			}
+			results[i] = info // 各 goroutine 写各自下标,无需加锁
+		}(i, pv)
 	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no provider succeeded")
+	wg.Wait()
+
+	acc := &PublicIP{}
+	for _, r := range results {
+		acc.merge(r)
 	}
-	return nil, lastErr
+	if acc.IP == "" {
+		return nil, fmt.Errorf("no provider succeeded")
+	}
+	slog.Debug("public ip resolved", "network", network, "ip", acc.IP, "geo", acc.Geo())
+	return acc, nil
 }
 
 // FetchBoth 并发抓取 v4/v6 出口信息(best-effort;某族不可用则该返回值为 nil)。

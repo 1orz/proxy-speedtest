@@ -69,6 +69,8 @@ const en = {
   'table.exportJson': 'Export JSON',
   'table.copied': 'Links copied to clipboard',
   'table.copiedAvailable': 'Working node links copied to clipboard',
+  'table.resetLayout': 'Reset column layout',
+  'table.dragHint': 'Drag to reorder column',
   'qr.title': 'Node QR Codes',
 
   // LiveMeter
@@ -81,6 +83,15 @@ const en = {
   // ResultImage
   'image.title': 'Exported Image',
   'image.download': 'Download',
+  'image.regenerate': 'Regenerate',
+  'image.regenerating': 'Generating…',
+  'image.hint': 'Regenerate the image to apply the current language / theme.',
+  'image.failed': 'Failed to generate image, please retry',
+
+  // LiveMeter extra
+  'live.peak': 'Peak',
+  'live.download': 'Download',
+  'live.upload': 'Upload',
 
   // IP card
   'ip.title': 'Public Egress IP',
@@ -158,6 +169,8 @@ const cn: Record<TKey, string> = {
   'table.exportJson': '导出结果 JSON',
   'table.copied': '链接已复制到剪贴板',
   'table.copiedAvailable': '可用节点链接已复制到剪贴板',
+  'table.resetLayout': '重置列布局',
+  'table.dragHint': '拖动可重排该列',
   'qr.title': '节点二维码',
 
   'live.testing': '正在测速：',
@@ -168,6 +181,14 @@ const cn: Record<TKey, string> = {
 
   'image.title': '导出图片',
   'image.download': '下载图片',
+  'image.regenerate': '重新生成',
+  'image.regenerating': '生成中…',
+  'image.hint': '切换语言 / 主题后,可重新生成图片以应用。',
+  'image.failed': '生成图片失败,请重试',
+
+  'live.peak': '峰值',
+  'live.download': '下载',
+  'live.upload': '上传',
 
   'ip.title': '公网出口 IP',
   'ip.pending': '获取中…',

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { TestNode, TestOptions, WebSocketMessage } from '@/types'
 import { tt } from '@/lib/i18n'
+import { getSpeed, formatSeconds } from '@/lib/utils'
 
 interface TestState {
   // 测试状态
@@ -28,12 +29,19 @@ interface TestState {
   // 选择状态
   selectedNodes: TestNode[]
   
+  // 本次运行是否启用了上传(测试开始时快照,用于让上传列一开始就出现)
+  runUploadEnabled: boolean
+
+  // 结果表格的用户偏好(持久化):列顺序、列宽
+  columnOrder: string[]
+  columnSizing: Record<string, number>
+
   // WebSocket
   ws: WebSocket | null
-  
+
   // 配置
   options: TestOptions
-  
+
   // Actions
   setLoading: (loading: boolean) => void
   setResult: (result: TestNode[]) => void
@@ -46,6 +54,11 @@ interface TestState {
   addTraffic: (traffic: number) => void
   incrementTime: () => void
   setPicdata: (data: string) => void
+  regenerateImage: () => Promise<boolean>
+  setRunUploadEnabled: (v: boolean) => void
+  setColumnOrder: (order: string[]) => void
+  setColumnSizing: (sizing: Record<string, number>) => void
+  resetTableLayout: () => void
   reset: () => void
   
   // WebSocket Actions
@@ -87,6 +100,9 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
   ipv6: '',
   ipv4geo: '',
   ipv6geo: '',
+  runUploadEnabled: false,
+  columnOrder: [],
+  columnSizing: {},
   currentTestingId: null,
   currentDirection: null,
   liveDownloadBps: 0,
@@ -119,7 +135,63 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
   addTraffic: (traffic) => set((state) => ({ totalTraffic: state.totalTraffic + traffic })),
   incrementTime: () => set((state) => ({ totalTime: state.totalTime + 1 })),
   setPicdata: (data) => set({ picdata: data }),
-  
+
+  // 用当前语言/主题/深浅色重新生成结果图片(不重测)。节点按当前排序方式排序,
+  // 与后端自动出图保持一致;成功则更新 picdata。
+  regenerateImage: async () => {
+    const s = get()
+    if (s.result.length === 0) return false
+    const spd = (n: TestNode) => { const v = getSpeed(n.speed); return isNaN(v) ? -1 : v }
+    const png = (n: TestNode) => (typeof n.ping === 'number' ? n.ping : 0)
+    const nodes = [...s.result]
+    switch (s.options.sortMethod) {
+      case 'speed': nodes.sort((a, b) => spd(a) - spd(b)); break
+      case 'rspeed': nodes.sort((a, b) => spd(b) - spd(a)); break
+      case 'ping': nodes.sort((a, b) => (png(a) || 1e9) - (png(b) || 1e9)); break
+      case 'rping': nodes.sort((a, b) => png(b) - png(a)); break
+    }
+    const payload = {
+      language: s.options.language,
+      appearance: s.options.appearance,
+      theme: s.options.theme,
+      fontSize: s.options.fontSize,
+      traffic: s.totalTraffic,
+      duration: formatSeconds(s.totalTime),
+      successCount: s.testOkCount,
+      linksCount: s.result.length,
+      ipv4: s.ipv4, ipv6: s.ipv6, ipv4geo: s.ipv4geo, ipv6geo: s.ipv6geo,
+      nodes: nodes.map((n) => ({
+        group: n.group,
+        remarks: n.remark,
+        protocol: n.protocol,
+        ping: String(n.ping),
+        avgSpeed: Math.max(0, Math.floor(getSpeed(n.speed)) || 0),
+        uploadSpeed: Math.max(0, Math.floor(getSpeed(n.uploadspeed ?? '')) || 0),
+      })),
+    }
+    try {
+      const resp = await fetch('/renderImage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!resp.ok) return false
+      const json = await resp.json()
+      if (json?.data) {
+        set({ picdata: json.data })
+        return true
+      }
+      return false
+    } catch {
+      return false
+    }
+  },
+
+  setRunUploadEnabled: (v) => set({ runUploadEnabled: v }),
+  setColumnOrder: (order) => set({ columnOrder: order }),
+  setColumnSizing: (sizing) => set({ columnSizing: sizing }),
+  resetTableLayout: () => set({ columnOrder: [], columnSizing: {} }),
+
   reset: () => set({
     result: [],
     testCount: 0,
@@ -131,6 +203,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
     ipv6: '',
     ipv4geo: '',
     ipv6geo: '',
+    runUploadEnabled: false,
     currentTestingId: null,
     currentDirection: null,
     liveDownloadBps: 0,
@@ -287,15 +360,21 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
     }
   },
 }), {
-  // 仅持久化用户填写的配置项,便于下次复用;测试结果/连接等瞬时状态不落盘
+  // 持久化用户配置 + 表格布局偏好;测试结果/连接等瞬时状态不落盘
   name: 'litespeedtest-options',
-  partialize: (state) => ({ options: state.options }),
+  partialize: (state) => ({
+    options: state.options,
+    columnOrder: state.columnOrder,
+    columnSizing: state.columnSizing,
+  }),
   // 用默认值补齐历史存档中缺失的字段,避免新增选项时读到 undefined
   merge: (persisted, current) => {
     const p = (persisted ?? {}) as Partial<TestState>
     return {
       ...current,
       options: { ...current.options, ...(p.options ?? {}) },
+      columnOrder: p.columnOrder ?? current.columnOrder,
+      columnSizing: p.columnSizing ?? current.columnSizing,
     }
   },
 }))

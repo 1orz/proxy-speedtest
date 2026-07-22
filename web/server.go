@@ -20,6 +20,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/1orz/proxy-speedtest/config"
+	"github.com/1orz/proxy-speedtest/download"
 	"github.com/1orz/proxy-speedtest/utils"
 	"github.com/1orz/proxy-speedtest/web/render"
 )
@@ -31,6 +32,7 @@ func ServeFile(port int, bind string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", serverFile)
 	mux.HandleFunc("/test", updateTest)
+	mux.HandleFunc("/renderImage", renderImage)
 	mux.HandleFunc("/getSubscriptionLink", getSubscriptionLink)
 	mux.HandleFunc("/getSubscription", getSubscription)
 
@@ -152,6 +154,89 @@ func updateTest(w http.ResponseWriter, r *http.Request) {
 		// 	break
 		// }
 	}
+}
+
+// renderImageRequest 是"重新生成图片"端点的请求体:携带当前节点结果 + 渲染选项
+// (语言/主题/appearance/字体/公网 IP),由前端用当前偏好组装。节点按传入顺序渲染(不再排序)。
+type renderImageRequest struct {
+	Language   string `json:"language"`
+	Appearance string `json:"appearance"`
+	Theme      string `json:"theme"`
+	FontSize   int    `json:"fontSize"`
+	Traffic    int64  `json:"traffic"`
+	Duration   string `json:"duration"`
+	Success    int    `json:"successCount"`
+	Total      int    `json:"linksCount"`
+	IPv4       string `json:"ipv4"`
+	IPv6       string `json:"ipv6"`
+	IPv4Geo    string `json:"ipv4geo"`
+	IPv6Geo    string `json:"ipv6geo"`
+	Nodes      []struct {
+		Group       string `json:"group"`
+		Remarks     string `json:"remarks"`
+		Protocol    string `json:"protocol"`
+		Ping        string `json:"ping"`
+		AvgSpeed    int64  `json:"avgSpeed"`
+		UploadSpeed int64  `json:"uploadSpeed"`
+	} `json:"nodes"`
+}
+
+// renderImage 无状态地按当前偏好重渲染结果图片,返回 base64 PNG(data URL)。
+// 用于用户测速后切换了语言/主题/深浅色,想不重测就更新图片。
+func renderImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Body == nil {
+		http.Error(w, "empty body", http.StatusBadRequest)
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var req renderImageRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(req.Nodes) == 0 {
+		http.Error(w, "no nodes", http.StatusBadRequest)
+		return
+	}
+	if req.FontSize < 8 {
+		req.FontSize = 24
+	}
+	nodes := make(render.Nodes, 0, len(req.Nodes))
+	for _, n := range req.Nodes {
+		nodes = append(nodes, render.Node{
+			Group:       n.Group,
+			Remarks:     n.Remarks,
+			Protocol:    n.Protocol,
+			Ping:        n.Ping,
+			AvgSpeed:    n.AvgSpeed,
+			UploadSpeed: n.UploadSpeed,
+		})
+	}
+	fontPath := "WenQuanYiMicroHei-01.ttf"
+	options := render.NewTableOptions(40, 30, 0.5, 0.5, req.FontSize, 0.5, fontPath, req.Language, req.Theme, "Asia/Shanghai", FontBytes)
+	options.SetAppearance(req.Appearance)
+	options.SetIPInfo(ipDisplayLine("IPv4", req.IPv4, req.IPv4Geo), ipDisplayLine("IPv6", req.IPv6, req.IPv6Geo))
+	table, err := render.NewTableWithOption(nodes, &options)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	msg := table.FormatTraffic(download.ByteCountIECTrim(req.Traffic), req.Duration, fmt.Sprintf("%d/%d", req.Success, req.Total))
+	b64, err := table.EncodeB64(msg)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"data": b64})
 }
 
 func readConfig(configPath string) (*ProfileTestOptions, error) {

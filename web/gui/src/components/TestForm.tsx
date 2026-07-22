@@ -121,8 +121,10 @@ export function TestForm() {
       return
     }
 
+    const uploadEnable = options.uploadEnable && options.speedtestMode !== 'pingonly'
     reset()
-    useTestStore.setState({ loading: true })
+    // 本次是否测上传在开始时即确定,让上传列一开始就出现(而非等测上传时才蹦出来)
+    useTestStore.setState({ loading: true, runUploadEnabled: uploadEnable })
 
     const payload = JSON.stringify({
       testMode: 2,
@@ -140,7 +142,7 @@ export function TestForm() {
       appearance: options.appearance,
       downloadSize: options.downloadSize,
       downloadUrl: options.downloadUrl,
-      uploadEnable: options.uploadEnable && options.speedtestMode !== 'pingonly',
+      uploadEnable,
       uploadSize: options.uploadSize,
     })
 

@@ -10,7 +10,7 @@ import {
   type SortingState,
   type RowSelectionState,
 } from '@tanstack/react-table'
-import { ChevronDown, ChevronUp, Copy, Download, QrCode, FileJson, MoreHorizontal } from 'lucide-react'
+import { ChevronDown, ChevronUp, Copy, Download, QrCode, FileJson, MoreHorizontal, GripVertical, RotateCcw } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,14 +29,18 @@ import type { TestNode } from '@/types'
 
 export function ResultTable() {
   const t = useI18n()
-  const { result, selectedNodes, setSelectedNodes, options, totalTraffic, totalTime } = useTestStore()
+  const {
+    result, selectedNodes, setSelectedNodes, options, totalTraffic, totalTime,
+    runUploadEnabled, columnOrder, columnSizing, setColumnOrder, setColumnSizing, resetTableLayout,
+  } = useTestStore()
   const [sorting, setSorting] = useState<SortingState>([])
   const [globalFilter, setGlobalFilter] = useState('')
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
   const [qrDialogOpen, setQrDialogOpen] = useState(false)
+  const [dragCol, setDragCol] = useState<string | null>(null)
 
-  // 仅当有节点测过上传时才显示上传列,避免默认(未开上传)出现空列
-  const hasUpload = result.some((n) => !!n.uploadspeed)
+  // 本次运行启用了上传(或已有上传数据)时就显示上传列 —— 一开始即确定,不再中途蹦出
+  const hasUpload = runUploadEnabled || result.some((n) => !!n.uploadspeed)
 
   const columns = useMemo<ColumnDef<TestNode>[]>(
     () => [
@@ -58,7 +62,9 @@ export function ResultTable() {
           />
         ),
         enableSorting: false,
-        size: 40,
+        enableResizing: false,
+        size: 44,
+        minSize: 44,
       },
       {
         accessorKey: 'remark',
@@ -174,6 +180,32 @@ export function ResultTable() {
     [t, options.theme, hasUpload]
   )
 
+  // 当前所有列 id(顺序为定义顺序);上传列存在与否会变
+  const columnIds = useMemo(
+    () => columns.map((c) => (('id' in c && c.id) || ('accessorKey' in c && (c.accessorKey as string)) || '')),
+    [columns]
+  )
+  // 有效列顺序 = 持久化顺序中仍存在的列 + 新增列(追加),且 select 永远第一
+  const effectiveOrder = useMemo(() => {
+    const known = new Set(columnIds)
+    const ordered = columnOrder.filter((id) => known.has(id))
+    const missing = columnIds.filter((id) => !ordered.includes(id))
+    const merged = [...ordered, ...missing].filter((id) => id !== 'select')
+    return ['select', ...merged]
+  }, [columnOrder, columnIds])
+
+  // 表头拖放重排:把 dragCol 移动到 targetId 之前
+  const handleReorder = useCallback((targetId: string) => {
+    setDragCol(null)
+    if (!dragCol || dragCol === targetId || targetId === 'select' || dragCol === 'select') return
+    const next = [...effectiveOrder]
+    const from = next.indexOf(dragCol)
+    const to = next.indexOf(targetId)
+    if (from < 0 || to < 0) return
+    next.splice(to, 0, next.splice(from, 1)[0])
+    setColumnOrder(next)
+  }, [dragCol, effectiveOrder, setColumnOrder])
+
   const table = useReactTable({
     data: result,
     columns,
@@ -181,9 +213,15 @@ export function ResultTable() {
       sorting,
       globalFilter,
       rowSelection,
+      columnOrder: effectiveOrder,
+      columnSizing,
     },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
+    onColumnOrderChange: (updater) =>
+      setColumnOrder(typeof updater === 'function' ? updater(effectiveOrder) : updater),
+    onColumnSizingChange: (updater) =>
+      setColumnSizing(typeof updater === 'function' ? updater(columnSizing) : updater),
     onRowSelectionChange: (updater) => {
       const newSelection = typeof updater === 'function' ? updater(rowSelection) : updater
       setRowSelection(newSelection)
@@ -198,6 +236,9 @@ export function ResultTable() {
     getFilteredRowModel: getFilteredRowModel(),
     getRowId: (row) => String(row.id),
     enableRowSelection: (row) => !row.original.testing,
+    enableColumnResizing: true,
+    columnResizeMode: 'onChange',
+    defaultColumn: { minSize: 60, size: 120 },
   })
 
   const handleCopyLinks = useCallback(async () => {
@@ -306,6 +347,10 @@ export function ResultTable() {
                         <FileJson className="w-4 h-4 mr-2" />
                         {t('table.exportJson')}
                       </DropdownMenuItem>
+                      <DropdownMenuItem onClick={resetTableLayout}>
+                        <RotateCcw className="w-4 h-4 mr-2" />
+                        {t('table.resetLayout')}
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
@@ -314,27 +359,63 @@ export function ResultTable() {
           </CardHeader>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full text-sm" style={{ minWidth: table.getTotalSize(), tableLayout: 'fixed' }}>
                 <thead>
                   {table.getHeaderGroups().map((headerGroup) => (
                     <tr key={headerGroup.id} className="border-b border-border/50 bg-secondary/30">
-                      {headerGroup.headers.map((header) => (
-                        <th
-                          key={header.id}
-                          className={cn(
-                            'px-4 py-3 text-left text-sm font-medium text-muted-foreground',
-                            header.column.getCanSort() && 'cursor-pointer select-none hover:text-foreground'
-                          )}
-                          style={{ width: header.getSize() }}
-                          onClick={header.column.getToggleSortingHandler()}
-                        >
-                          <div className="flex items-center gap-2">
-                            {flexRender(header.column.columnDef.header, header.getContext())}
-                            {header.column.getIsSorted() === 'asc' && <ChevronUp className="w-4 h-4" />}
-                            {header.column.getIsSorted() === 'desc' && <ChevronDown className="w-4 h-4" />}
-                          </div>
-                        </th>
-                      ))}
+                      {headerGroup.headers.map((header) => {
+                        const col = header.column
+                        const draggable = col.id !== 'select'
+                        const canSort = col.getCanSort()
+                        return (
+                          <th
+                            key={header.id}
+                            className={cn(
+                              'relative px-4 py-3 text-left text-sm font-medium text-muted-foreground',
+                              dragCol && draggable && dragCol !== col.id && 'bg-primary/10'
+                            )}
+                            style={{ width: header.getSize() }}
+                            onDragOver={draggable ? (e) => e.preventDefault() : undefined}
+                            onDrop={draggable ? () => handleReorder(col.id) : undefined}
+                          >
+                            <div className="flex items-center gap-1.5 overflow-hidden">
+                              {draggable && (
+                                <span
+                                  draggable
+                                  onDragStart={() => setDragCol(col.id)}
+                                  onDragEnd={() => setDragCol(null)}
+                                  className="shrink-0 cursor-grab text-muted-foreground/40 hover:text-foreground active:cursor-grabbing"
+                                  title={t('table.dragHint')}
+                                >
+                                  <GripVertical className="w-3.5 h-3.5" />
+                                </span>
+                              )}
+                              <div
+                                className={cn(
+                                  'flex items-center gap-1 truncate',
+                                  canSort && 'cursor-pointer select-none hover:text-foreground'
+                                )}
+                                onClick={canSort ? col.getToggleSortingHandler() : undefined}
+                              >
+                                {header.isPlaceholder ? null : flexRender(col.columnDef.header, header.getContext())}
+                                {col.getIsSorted() === 'asc' && <ChevronUp className="w-4 h-4 shrink-0" />}
+                                {col.getIsSorted() === 'desc' && <ChevronDown className="w-4 h-4 shrink-0" />}
+                              </div>
+                            </div>
+                            {col.getCanResize() && (
+                              <div
+                                onMouseDown={header.getResizeHandler()}
+                                onTouchStart={header.getResizeHandler()}
+                                onClick={(e) => e.stopPropagation()}
+                                className={cn(
+                                  'absolute right-0 top-0 h-full w-1.5 cursor-col-resize touch-none select-none',
+                                  col.getIsResizing() ? 'bg-primary' : 'hover:bg-primary/40'
+                                )}
+                              />
+                            )}
+                          </th>
+                        )
+                      })}
                     </tr>
                   ))}
                 </thead>
@@ -352,7 +433,11 @@ export function ResultTable() {
                       )}
                     >
                       {row.getVisibleCells().map((cell) => (
-                        <td key={cell.id} className="px-4 py-3 text-sm">
+                        <td
+                          key={cell.id}
+                          className="px-4 py-3 text-sm overflow-hidden"
+                          style={{ width: cell.column.getSize() }}
+                        >
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </td>
                       ))}

@@ -4,12 +4,14 @@ import { Download, Upload } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { useTestStore } from '@/store/test-store'
 import { useI18n } from '@/hooks/useI18n'
-import { bytesToSize, getSpeedColor } from '@/lib/utils'
+import { bytesToSize } from '@/lib/utils'
 
 const MAX_BPS = 125 * 1024 * 1024 // ~1 Gbps 满量程
-const SPARK_LEN = 40
+const SPARK_LEN = 64
 const START_ANGLE = 225 // 表盘起点(左下 7:30),缺口在底部
 const SWEEP = 270 // 扫过 270°
+// 刻度标签(MB/s),用 sqrt 压缩后的比例定位,呈现 OpenSpeedTest 式非线性刻度感
+const SCALE_MARKS = [1, 5, 10, 25, 50, 100]
 
 // 速率 → 表盘填充比例。sqrt 压缩,让低速段也有可见变化。
 function speedFraction(bps: number): number {
@@ -34,7 +36,10 @@ function useEased(target: number): number {
   const [val, setVal] = useState(0)
   const targetRef = useRef(target)
   const valRef = useRef(0)
-  targetRef.current = target
+  // 在 effect 里同步 target(而非渲染期写 ref),满足 React 规则;rAF 循环读取最新值
+  useEffect(() => {
+    targetRef.current = target
+  }, [target])
   useEffect(() => {
     let raf = 0
     const tick = () => {
@@ -59,7 +64,6 @@ export function LiveMeter() {
   const liveUploadBps = useTestStore((s) => s.liveUploadBps)
   const result = useTestStore((s) => s.result)
   const testCount = useTestStore((s) => s.testCount)
-  const theme = useTestStore((s) => s.options.theme)
 
   const isUp = currentDirection === 'up'
   const current = isUp ? liveUploadBps : liveDownloadBps
@@ -69,15 +73,12 @@ export function LiveMeter() {
 
   const displayed = useEased(current)
   const frac = speedFraction(displayed)
-  const speedColor = getSpeedColor(displayed, theme)
 
   // 火花线样本(换节点/换方向时清空;否则追加实时样本)
   const [samples, setSamples] = useState<number[]>([])
   const dirKey = `${currentTestingId}-${currentDirection}`
   const prevKeyRef = useRef(dirKey)
   useEffect(() => {
-    // ref 改写放在 effect 体内(而非 setState updater 内)保持 updater 纯净,
-    // 避免 StrictMode 下 updater 被双调用导致换节点/换方向时火花线不清空。
     if (prevKeyRef.current !== dirKey) {
       prevKeyRef.current = dirKey
       setSamples([current])
@@ -87,25 +88,33 @@ export function LiveMeter() {
   }, [current, dirKey])
 
   // 表盘几何
-  const size = 260
+  const size = 300
   const cx = size / 2
   const cy = size / 2
-  const r = 108
+  const r = 120
+  const strokeW = 18
   const track = arcPath(cx, cy, r, START_ANGLE, START_ANGLE + SWEEP)
   const prog = arcPath(cx, cy, r, START_ANGLE, START_ANGLE + Math.max(0.0001, frac) * SWEEP)
+  const tip = polar(cx, cy, r, START_ANGLE + frac * SWEEP)
 
   const gradId = isUp ? 'liveGradUp' : 'liveGradDown'
+  const fillId = isUp ? 'liveFillUp' : 'liveFillDown'
+  const glowId = 'liveGlow'
   const accent = isUp ? 'text-violet-400' : 'text-cyan-400'
 
-  // 火花线路径
-  const sparkMax = Math.max(1, ...samples)
-  const sparkPts = samples
-    .map((v, i) => {
-      const x = samples.length > 1 ? (i / (samples.length - 1)) * 100 : 0
-      const y = 30 - (v / sparkMax) * 28
-      return `${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
+  // 峰值(当前方向本轮)
+  const peak = samples.length ? Math.max(...samples) : 0
+
+  // 实时曲线(面积图):自动缩放到本轮峰值,底部为基线
+  const sparkMax = Math.max(1, peak) * 1.12
+  const pts = samples.map((v, i) => {
+    const x = samples.length > 1 ? (i / (samples.length - 1)) * 100 : 0
+    const y = 40 - Math.min(1, v / sparkMax) * 36
+    return { x, y }
+  })
+  const lineD = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ')
+  const areaD = pts.length > 1 ? `${lineD} L 100 40 L 0 40 Z` : ''
+  const last = pts[pts.length - 1]
 
   return (
     <motion.div
@@ -139,9 +148,9 @@ export function LiveMeter() {
             </span>
           </div>
 
-          {/* 表盘 */}
-          <div className="relative" style={{ width: size, height: size * 0.82 }}>
-            <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="overflow-visible">
+          {/* 表盘(响应式:窄屏自动缩小,不会被卡片裁切) */}
+          <div className="relative w-full" style={{ maxWidth: size }}>
+            <svg viewBox={`0 0 ${size} ${size}`} className="h-auto w-full overflow-visible">
               <defs>
                 <linearGradient id="liveGradDown" x1="0" y1="0" x2="1" y2="1">
                   <stop offset="0%" stopColor="#22d3ee" />
@@ -151,30 +160,84 @@ export function LiveMeter() {
                   <stop offset="0%" stopColor="#a855f7" />
                   <stop offset="100%" stopColor="#ec4899" />
                 </linearGradient>
+                <linearGradient id="liveFillDown" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.45" />
+                  <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
+                </linearGradient>
+                <linearGradient id="liveFillUp" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#a855f7" stopOpacity="0.45" />
+                  <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
+                </linearGradient>
+                <filter id="liveGlow" x="-50%" y="-50%" width="200%" height="200%">
+                  <feGaussianBlur stdDeviation="4" result="b" />
+                  <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+                </filter>
               </defs>
-              <path d={track} fill="none" stroke="currentColor" strokeWidth={14} strokeLinecap="round" className="text-muted/25" />
+
+              {/* 轨道 */}
+              <path d={track} fill="none" stroke="currentColor" strokeWidth={strokeW} strokeLinecap="round" className="text-muted-foreground/15" />
+
+              {/* 刻度标签(置于弧外,避免与中心大数字拥挤) */}
+              {SCALE_MARKS.map((mb) => {
+                const f = speedFraction(mb * 1024 * 1024)
+                const p = polar(cx, cy, r + 13, START_ANGLE + f * SWEEP)
+                return (
+                  <text
+                    key={mb}
+                    x={p.x}
+                    y={p.y}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    className="fill-muted-foreground/60"
+                    fontSize={10}
+                  >
+                    {mb}
+                  </text>
+                )
+              })}
+
+              {/* 进度弧 */}
               <path
                 d={prog}
                 fill="none"
                 stroke={`url(#${gradId})`}
-                strokeWidth={14}
+                strokeWidth={strokeW}
                 strokeLinecap="round"
+                filter={`url(#${glowId})`}
                 style={{ transition: 'stroke 0.4s ease' }}
               />
+              {/* 弧头光点 */}
+              {frac > 0.001 && (
+                <circle cx={tip.x} cy={tip.y} r={7} className="fill-background" stroke={`url(#${gradId})`} strokeWidth={3} filter={`url(#${glowId})`} />
+              )}
             </svg>
-            {/* 中心数字 */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center pt-2">
-              <div className="text-4xl font-bold tabular-nums transition-colors" style={{ color: speedColor }}>
+
+            {/* 中心数字(文字用前景色,颜色身份由弧线承载) */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <div className="text-4xl font-bold tabular-nums text-foreground">
                 {bytesToSize(displayed)}
-                <span className="ml-1 text-lg font-medium text-muted-foreground">/s</span>
               </div>
-              {/* 火花线 */}
-              <svg width="120" height="32" viewBox="0 0 100 32" className="mt-2 opacity-80" preserveAspectRatio="none">
-                {samples.length > 1 && (
-                  <polyline points={sparkPts} fill="none" stroke={`url(#${gradId})`} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-                )}
-              </svg>
+              <div className="mt-1 text-sm font-medium text-muted-foreground">/s</div>
             </div>
+          </div>
+
+          {/* 实时曲线 + 峰值 */}
+          <div className="w-full">
+            <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+              <span className={accent}>{isUp ? t('live.upload') : t('live.download')}</span>
+              <span>{t('live.peak')} {bytesToSize(peak)}/s</span>
+            </div>
+            <svg width="100%" height="56" viewBox="0 0 100 40" preserveAspectRatio="none" className="overflow-visible">
+              {/* 基线网格(内敛) */}
+              <line x1="0" y1="20" x2="100" y2="20" stroke="currentColor" strokeWidth={0.4} className="text-muted-foreground/15" vectorEffect="non-scaling-stroke" />
+              {areaD && <path d={areaD} fill={`url(#${fillId})`} stroke="none" />}
+              {pts.length > 1 && (
+                <path d={lineD} fill="none" stroke={`url(#${gradId})`} strokeWidth={2} vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+              )}
+              {last && pts.length > 1 && (
+                <circle cx={last.x} cy={last.y} r={2.4} className="fill-background" stroke={`url(#${gradId})`} strokeWidth={1.6} vectorEffect="non-scaling-stroke" />
+              )}
+            </svg>
           </div>
 
           {/* 进度 */}
