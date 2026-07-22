@@ -3,6 +3,7 @@ import { motion } from 'motion/react'
 import { Download, Upload } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { useTestStore } from '@/store/test-store'
+import { useI18n } from '@/hooks/useI18n'
 import { bytesToSize, getSpeedColor } from '@/lib/utils'
 
 const MAX_BPS = 125 * 1024 * 1024 // ~1 Gbps 满量程
@@ -51,6 +52,7 @@ function useEased(target: number): number {
 }
 
 export function LiveMeter() {
+  const t = useI18n()
   const currentTestingId = useTestStore((s) => s.currentTestingId)
   const currentDirection = useTestStore((s) => s.currentDirection)
   const liveDownloadBps = useTestStore((s) => s.liveDownloadBps)
@@ -125,15 +127,15 @@ export function LiveMeter() {
           {/* 当前节点 + 阶段 */}
           <div className="flex w-full items-center justify-between text-sm">
             <span className="truncate text-muted-foreground">
-              正在测速:
+              {t('live.testing')}
               <span className="ml-1 font-medium text-foreground">
-                {node ? node.remark || `节点 #${currentTestingId}` : '准备中…'}
+                {node ? node.remark || t('live.node', { id: currentTestingId ?? 0 }) : t('live.preparing')}
               </span>
               {node?.protocol && <span className="ml-1 text-xs text-muted-foreground">· {node.protocol}</span>}
             </span>
             <span className={`flex shrink-0 items-center gap-1 font-medium ${accent}`}>
               {isUp ? <Upload className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-              {isUp ? '上传中' : '下载中'}
+              {isUp ? t('live.uploading') : t('live.downloading')}
             </span>
           </div>
 
@@ -178,8 +180,8 @@ export function LiveMeter() {
           {/* 进度 */}
           <div className="w-full">
             <div className="mb-1 flex justify-between text-xs text-muted-foreground">
-              <span>已完成 {testCount}</span>
-              <span>共 {total} 节点</span>
+              <span>{t('dash.done', { n: testCount })}</span>
+              <span>{t('dash.totalNodes', { n: total })}</span>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-muted/30">
               <motion.div

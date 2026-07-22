@@ -291,6 +291,7 @@ type ProfileTestOptions struct {
 	UploadEnable    bool          `json:"uploadEnable"`             // also test upload speed after download
 	UploadURL       string        `json:"uploadUrl"`                // custom upload URL (POST sink); optional
 	UploadSize      string        `json:"uploadSize"`               // upload endpoint preset key (see download.GetUploadURL)
+	Appearance      string        `json:"appearance"`               // image appearance: "light"(default) | "dark"
 }
 
 type CMDOptions struct {
@@ -376,6 +377,50 @@ type ProfileTest struct {
 	Links       []string
 	mu          sync.Mutex
 	wg          sync.WaitGroup // wait for all to finish
+
+	// 测速机自身公网出口信息(全局一份,best-effort)。ipDone 在抓取协程结束时关闭。
+	ipMu   sync.Mutex
+	ipV4   *PublicIP
+	ipV6   *PublicIP
+	ipDone chan struct{}
+}
+
+// shouldFetchIP 仅在会产出图片时抓取(避免 json/text/none 模式引入外部请求)。
+func (p *ProfileTest) shouldFetchIP() bool {
+	if p.Options.OutputMode == PIC_BASE64 || p.Options.OutputMode == PIC_PATH {
+		return true
+	}
+	return p.Options.OutputPicPath != ""
+}
+
+// startIPFetch 在测速开始时异步抓取公网 v4/v6+geo,就绪即发 "ipinfo" 消息。
+func (p *ProfileTest) startIPFetch(ctx context.Context) {
+	p.ipDone = make(chan struct{})
+	go func() {
+		defer close(p.ipDone)
+		v4, v6 := FetchBoth(ctx)
+		p.ipMu.Lock()
+		p.ipV4, p.ipV6 = v4, v6
+		p.ipMu.Unlock()
+		if v4 != nil || v6 != nil {
+			p.WriteMessage(getIPInfoMsg(v4, v6))
+		}
+	}()
+}
+
+// ipInfoLines 返回图片页脚的两行文本。抓取从测速开始就并行进行,通常渲染时已就绪;
+// 这里最多再等 3s,避免个别很快结束的测试(pingonly/全部失败)被慢速 IP 源拖住出图。
+// 超时则本次出图不带 IP(IP 仍会随 WS 的 ipinfo 消息在 GUI 展示)。
+func (p *ProfileTest) ipInfoLines() (v4Line, v6Line string) {
+	if p.ipDone != nil {
+		select {
+		case <-p.ipDone:
+		case <-time.After(3 * time.Second):
+		}
+	}
+	p.ipMu.Lock()
+	defer p.ipMu.Unlock()
+	return p.ipV4.Line("IPv4"), p.ipV6.Line("IPv6")
 }
 
 func (p *ProfileTest) WriteMessage(data []byte) error {
@@ -434,6 +479,10 @@ func (p *ProfileTest) testAll(ctx context.Context) (render.Nodes, error) {
 	}
 	start := time.Now()
 	p.WriteMessage(getMsgByte(-1, "started"))
+	// 异步抓取测速机自身公网出口 IP+geo(仅在会出图片时);就绪即通过 WS 推送。
+	if p.shouldFetchIP() {
+		p.startIPFetch(ctx)
+	}
 	// for i := range p.Links {
 	// 	p.WriteMessage(gotserverMsg(i, p.Links[i], p.Options.GroupName))
 	// }
@@ -521,6 +570,9 @@ func (p *ProfileTest) testAll(ctx context.Context) (render.Nodes, error) {
 func (p *ProfileTest) renderPic(nodes render.Nodes, traffic int64, duration string, successCount int, linksCount int) error {
 	fontPath := "WenQuanYiMicroHei-01.ttf"
 	options := render.NewTableOptions(40, 30, 0.5, 0.5, p.Options.FontSize, 0.5, fontPath, p.Options.Language, p.Options.Theme, "Asia/Shanghai", FontBytes)
+	options.SetAppearance(p.Options.Appearance)
+	v4Line, v6Line := p.ipInfoLines()
+	options.SetIPInfo(v4Line, v6Line)
 	table, err := render.NewTableWithOption(nodes, &options)
 	if err != nil {
 		return err
@@ -557,6 +609,9 @@ func (p *ProfileTest) saveJSON(nodes render.Nodes, traffic int64, duration strin
 func (p *ProfileTest) savePic(nodes render.Nodes, traffic int64, duration string, successCount int, linksCount int) error {
 	fontPath := "WenQuanYiMicroHei-01.ttf"
 	options := render.NewTableOptions(40, 30, 0.5, 0.5, p.Options.FontSize, 0.5, fontPath, p.Options.Language, p.Options.Theme, "Asia/Shanghai", FontBytes)
+	options.SetAppearance(p.Options.Appearance)
+	v4Line, v6Line := p.ipInfoLines()
+	options.SetIPInfo(v4Line, v6Line)
 	table, err := render.NewTableWithOption(nodes, &options)
 	if err != nil {
 		return err

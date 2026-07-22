@@ -26,6 +26,7 @@ export interface TestOptions {
   language: 'en' | 'cn'
   fontSize: number
   theme: 'rainbow' | 'original'
+  appearance: 'dark' | 'light'
   testMode: number
   downloadSize: string
   downloadUrl: string
@@ -52,6 +53,10 @@ export interface WebSocketMessage {
   servers?: WebSocketMessage[]
   reason?: string
   path?: string
+  ipv4?: string
+  ipv6?: string
+  ipv4geo?: string
+  ipv6geo?: string
 }
 
 export type SpeedTestMode = 'all' | 'pingonly' | 'speedonly'

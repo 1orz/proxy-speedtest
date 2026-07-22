@@ -34,6 +34,42 @@
   --radius-sm: 4px;
 }
 
+/* 深色为默认(由上面的 @theme 提供)。网格线颜色抽成变量,便于随主题切换。 */
+:root {
+  --grid-line: rgba(255, 255, 255, 0.02);
+}
+
+/* 浅色主题:白底黑字。data-theme 由 store 的 appearance 写到 <html> 上。
+   选择器特异性高于 @theme 的 :root,故覆盖生效。 */
+:root[data-theme='light'] {
+  --color-background: #f6f7fb;
+  --color-foreground: #0a0a0f;
+  --color-card: #ffffff;
+  --color-card-foreground: #0a0a0f;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #0a0a0f;
+  --color-primary: #0091ff;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #eceef3;
+  --color-secondary-foreground: #0a0a0f;
+  --color-muted: #eceef3;
+  --color-muted-foreground: #5b5b66;
+  --color-accent: #ff6b35;
+  --color-accent-foreground: #ffffff;
+  --color-destructive: #e5484d;
+  --color-destructive-foreground: #ffffff;
+  --color-border: #e2e3ea;
+  --color-input: #e2e3ea;
+  --color-ring: #0091ff;
+
+  --color-success: #12b76a;
+  --color-warning: #d68a00;
+  --color-error: #e5484d;
+  --color-info: #0091ff;
+
+  --grid-line: rgba(10, 10, 15, 0.04);
+}
+
 * {
   border-color: var(--color-border);
 }
@@ -93,9 +129,9 @@ body {
 
 /* 网格背景 */
 .grid-pattern {
-  background-image: 
-    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 50px 50px;
 }
 

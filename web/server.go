@@ -172,6 +172,9 @@ func readConfig(configPath string) (*ProfileTestOptions, error) {
 	if options.Theme == "" {
 		options.Theme = "rainbow"
 	}
+	if options.Appearance == "" {
+		options.Appearance = "light"
+	}
 	if options.Timeout < 8 {
 		options.Timeout = 8
 	}
@@ -192,6 +195,7 @@ func TestFromCMD(subscription string, configPath *string, cmdOpts *CMDOptions) e
 		Language:        "en",
 		FontSize:        24,
 		Theme:           "rainbow",
+		Appearance:      "light",
 		Timeout:         15 * time.Second,
 		GeneratePicMode: PIC_PATH,
 		OutputMode:      PIC_PATH,

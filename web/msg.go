@@ -36,6 +36,26 @@ type Message struct {
 	Protocol string    `json:"protocol,omitempty"`
 	PicData  string    `json:"data,omitempty"`
 	Servers  []Message `json:"servers,omitempty"`
+	// 公网出口信息(info == "ipinfo",全局一份):测速机自身的 v4/v6 地址与归属地
+	IPv4    string `json:"ipv4,omitempty"`
+	IPv6    string `json:"ipv6,omitempty"`
+	IPv4Geo string `json:"ipv4geo,omitempty"`
+	IPv6Geo string `json:"ipv6geo,omitempty"`
+}
+
+// getIPInfoMsg 构造 "ipinfo" 全局消息(测速机自身公网出口)。任一族缺失即留空字段。
+func getIPInfoMsg(v4, v6 *PublicIP) []byte {
+	msg := Message{ID: -1, Info: "ipinfo"}
+	if v4 != nil {
+		msg.IPv4 = v4.IP
+		msg.IPv4Geo = v4.Geo()
+	}
+	if v6 != nil {
+		msg.IPv6 = v6.IP
+		msg.IPv6Geo = v6.Geo()
+	}
+	b, _ := json.Marshal(msg)
+	return b
 }
 
 func GetRemarks(link string) (string, string, error) {

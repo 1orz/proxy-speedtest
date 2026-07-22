@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -66,33 +65,86 @@ var (
 
 type Node struct {
 	Id       int    `json:"id"`
-	Group    string `en:"Group" cn:"群组名" json:"group"`
-	Remarks  string `en:"Remarks" cn:"备注" json:"remarks"`
-	Protocol string `en:"Protocol" cn:"协议" json:"protocol"`
-	Ping     string `en:"Ping" cn:"Ping" json:"ping"`
-	AvgSpeed int64  `en:"AvgSpeed" cn:"平均速度" json:"avgSpeed"`
-	MaxSpeed int64  `en:"MaxSpeed" cn:"最大速度" json:"maxSpeed"`
-	// 上传速度不带 en:/cn: tag:故意不进 getNodeHeaders,PNG 表格布局(6 列硬编码)保持不变,
-	// 上传仅走 WS 实时 + 网页表格 + JSON 输出。
+	Group    string `json:"group"`
+	Remarks  string `json:"remarks"`
+	Protocol string `json:"protocol"`
+	Ping     string `json:"ping"`
+	AvgSpeed int64  `json:"avgSpeed"`
+	MaxSpeed int64  `json:"maxSpeed"` // 保留供排序/文本输出用;PNG 表格已不再单列展示
+	// 上传只取平均速度进表;MaxUploadSpeed 仍随 JSON 输出但不进 PNG 列。
 	UploadSpeed    int64 `json:"uploadSpeed"`
 	MaxUploadSpeed int64 `json:"maxUploadSpeed"`
 	Success        bool  `json:"success"`
 	Traffic        int64 `json:"traffic"`
-	Link     string `json:"link,omitempty"` // api only
+	Link           string `json:"link,omitempty"` // api only
 }
 
-func getNodeHeaders(language string) ([]string, map[string]string) {
-	kvs := map[string]string{}
-	var keys []string
-	t := reflect.TypeOf(Node{})
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if v, ok := f.Tag.Lookup(language); ok {
-			kvs[f.Name] = v
-			keys = append(keys, f.Name)
+// column 描述 PNG 表格的一列。列集合在 NewTableWithOption 里一次性构建,
+// 之后所有布局函数(宽度/竖线/表头/单元格/彩色块)都按同一份切片顺序迭代,
+// 消除了旧实现里 CellWidths.toMap() 依赖 map 顺序的隐患。
+type column struct {
+	key         string
+	header      string
+	width       float64
+	isSpeed     bool                // 有彩色背景块,且值文字强制深色(两种主题都在亮色块上)
+	centerValue bool                // 值居中(Group/Remarks 左对齐,其余居中,复刻旧行为)
+	value       func(n Node) string
+	speedValue  func(n Node) int64 // 仅 isSpeed 列有
+}
+
+func trHeader(language, en, cn string) string {
+	if language == "cn" {
+		return cn
+	}
+	return en
+}
+
+func anyUpload(nodes Nodes) bool {
+	for _, n := range nodes {
+		if n.UploadSpeed > 0 {
+			return true
 		}
 	}
-	return keys, kvs
+	return false
+}
+
+// buildColumns 依据语言与是否含上传测速,产出列定义并计算各列宽度。
+func buildColumns(face font.Face, nodes Nodes, language string, hasUpload bool) []column {
+	cols := []column{
+		{key: "Group", header: trHeader(language, "Group", "群组名"),
+			value: func(n Node) string { return n.Group }},
+		{key: "Remarks", header: trHeader(language, "Remarks", "备注"),
+			value: func(n Node) string { return n.Remarks }},
+		{key: "Protocol", header: trHeader(language, "Protocol", "协议"), centerValue: true,
+			value: func(n Node) string { return n.Protocol }},
+		{key: "Ping", header: trHeader(language, "Ping", "Ping"), centerValue: true,
+			value: func(n Node) string { return n.Ping }},
+		{key: "Speed", header: trHeader(language, "Speed", "速度"), isSpeed: true, centerValue: true,
+			value:      func(n Node) string { return download.ByteCountIECTrim(n.AvgSpeed) },
+			speedValue: func(n Node) int64 { return n.AvgSpeed }},
+	}
+	if hasUpload {
+		cols = append(cols, column{
+			key: "Upload", header: trHeader(language, "Upload", "上传"), isSpeed: true, centerValue: true,
+			value:      func(n Node) string { return download.ByteCountIECTrim(n.UploadSpeed) },
+			speedValue: func(n Node) int64 { return n.UploadSpeed },
+		})
+	}
+	for i := range cols {
+		cols[i].width = colWidth(face, cols[i], nodes)
+	}
+	return cols
+}
+
+// colWidth 取本列表头与全部节点值的最大字符宽度。
+func colWidth(face font.Face, c column, nodes Nodes) float64 {
+	w := getWidth(face, c.header)
+	for _, n := range nodes {
+		if cw := getWidth(face, c.value(n)); cw > w {
+			w = cw
+		}
+	}
+	return w
 }
 
 type Nodes []Node
@@ -150,6 +202,13 @@ func CSV2Nodes(path string) (Nodes, error) {
 	return nodes, nil
 }
 
+// IPInfo 是要画进图片页脚的公网出口信息(测速机自身),全局一份。
+// 空串表示该族不可用,既不画也不占位。
+type IPInfo struct {
+	V4Line string
+	V6Line string
+}
+
 type TableOptions struct {
 	horizontalpadding float64 // left + right
 	verticalpadding   float64 // up + down
@@ -163,6 +222,47 @@ type TableOptions struct {
 	theme             Theme
 	timezone          string
 	fontBytes         []byte
+	appearance        string // "light"(默认,白底黑字) | "dark"(黑底白字)
+	ipInfo            IPInfo
+}
+
+// SetAppearance 设定深/浅主题。空或未知值按 light 处理。
+func (o *TableOptions) SetAppearance(a string) {
+	if a == "dark" {
+		o.appearance = "dark"
+	} else {
+		o.appearance = "light"
+	}
+}
+
+// SetIPInfo 设定图片页脚的公网 IP 展示行(整行文本,已含前缀与 geo)。
+func (o *TableOptions) SetIPInfo(v4Line, v6Line string) {
+	o.ipInfo = IPInfo{V4Line: v4Line, V6Line: v6Line}
+}
+
+func (o TableOptions) bg() (int, int, int) {
+	if o.appearance == "dark" {
+		return 0x0a, 0x0a, 0x0f
+	}
+	return 255, 255, 255
+}
+
+func (o TableOptions) fg() (int, int, int) {
+	if o.appearance == "dark" {
+		return 255, 255, 255
+	}
+	return 0, 0, 0
+}
+
+func ipLines(info IPInfo) []string {
+	var out []string
+	if info.V4Line != "" {
+		out = append(out, info.V4Line)
+	}
+	if info.V6Line != "" {
+		out = append(out, info.V6Line)
+	}
+	return out
 }
 
 func NewTableOptions(horizontalpadding float64, verticalpadding float64, tableTopPadding float64,
@@ -184,24 +284,8 @@ func NewTableOptions(horizontalpadding float64, verticalpadding float64, tableTo
 		theme:             theme,
 		timezone:          timezone,
 		fontBytes:         fontBytes,
+		appearance:        "light",
 	}
-}
-
-type CellWidths struct {
-	Group    float64
-	Remarks  float64
-	Protocol float64
-	Ping     float64
-	AvgSpeed float64
-	MaxSpeed float64
-}
-
-func (c CellWidths) toMap() map[string]float64 {
-	data, _ := json.Marshal(&c)
-	m := map[string]float64{}
-	// ignore error
-	json.Unmarshal(data, &m)
-	return m
 }
 
 type I18N struct {
@@ -223,10 +307,10 @@ type Table struct {
 	width  int
 	height int
 	*Context
-	nodes      Nodes
-	options    TableOptions
-	cellWidths *CellWidths
-	i18n       *I18N
+	nodes   Nodes
+	options TableOptions
+	columns []column
+	i18n    *I18N
 }
 
 func NewTable(width int, height int, options TableOptions) Table {
@@ -252,15 +336,28 @@ func NewTableWithOption(nodes Nodes, options *TableOptions) (*Table, error) {
 	if err != nil {
 		return nil, err
 	}
-	widths := calcWidth(fontface, nodes)
+	cols := buildColumns(fontface, nodes, options.language, anyUpload(nodes))
 	fontHeight := calcHeight(fontface)
 	options.fontHeight = fontHeight
 	horizontalpadding := options.horizontalpadding
-	tableWidth := widths.Group + horizontalpadding + widths.Remarks + horizontalpadding + widths.Protocol + horizontalpadding + widths.Ping + horizontalpadding + widths.AvgSpeed + horizontalpadding + widths.MaxSpeed + horizontalpadding + options.lineWidth*2
-	tableHeight := (fontHeight+options.verticalpadding)*float64((len(nodes)+4)) + options.tableTopPadding*2 + options.fontHeight*options.smallFontRatio
+
+	tableWidth := options.lineWidth * 2
+	for _, c := range cols {
+		tableWidth += c.width + horizontalpadding
+	}
+	// IP 行可能比表格更宽,按需加宽(留出左右边距)。
+	for _, line := range ipLines(options.ipInfo) {
+		if w := getWidth(fontface, line) + horizontalpadding; w > tableWidth {
+			tableWidth = w
+		}
+	}
+
+	n := len(ipLines(options.ipInfo))
+	// +4 = 标题/表头/流量/生成时间四行;+n = IP 行(画在表格框下方,poweredBy 之上)。
+	tableHeight := (fontHeight+options.verticalpadding)*float64(len(nodes)+4+n) + options.tableTopPadding*2 + options.fontHeight*options.smallFontRatio
 	table := NewTable(int(tableWidth), int(tableHeight), *options)
 	table.nodes = nodes
-	table.cellWidths = widths
+	table.columns = cols
 	result, err := NewI18N(i18n[options.language])
 	if err != nil {
 		return nil, err
@@ -288,14 +385,11 @@ func (t *Table) drawVerticalLines() {
 	padding := t.options.horizontalpadding
 	var x float64
 	t.drawFullVerticalLine(t.options.lineWidth)
-	ks, _ := getNodeHeaders(t.options.language)
-	cellWidths := t.cellWidths.toMap()
-	for i := 1; i < len(cellWidths); i++ {
-		k := ks[i-1]
-		x += cellWidths[k] + padding
+	for i := 0; i < len(t.columns)-1; i++ {
+		x += t.columns[i].width + padding
 		t.drawVerticalLine(x)
 	}
-	x += cellWidths[ks[len(cellWidths)-1]] + padding
+	x += t.columns[len(t.columns)-1].width + padding
 	t.drawFullVerticalLine(x)
 }
 
@@ -316,7 +410,6 @@ func (t *Table) drawFullVerticalLine(x float64) {
 }
 
 func (t *Table) drawTitle() {
-	// horizontalpadding := t.options.horizontalpadding
 	title := t.i18n.Title
 	var x float64 = float64(t.width)/2 - getWidth(t.fontFace, title)/2
 	var y float64 = t.options.fontHeight/2 + t.options.verticalpadding/2 + t.options.tableTopPadding
@@ -327,17 +420,14 @@ func (t *Table) drawHeader() {
 	horizontalpadding := t.options.horizontalpadding
 	var x float64 = horizontalpadding / 2
 	var y float64 = t.options.fontHeight/2 + t.options.verticalpadding/2 + t.options.tableTopPadding + t.options.fontHeight + t.options.verticalpadding
-	cellWidths := t.cellWidths.toMap()
-	ks, kvs := getNodeHeaders(t.options.language)
-	for _, k := range ks {
-		adjust := cellWidths[k]/2 - getWidth(t.fontFace, kvs[k])/2
-		t.centerString(kvs[k], x+adjust, y)
-		x += cellWidths[k] + horizontalpadding
+	for _, c := range t.columns {
+		adjust := c.width/2 - getWidth(t.fontFace, c.header)/2
+		t.centerString(c.header, x+adjust, y)
+		x += c.width + horizontalpadding
 	}
 }
 
 func (t *Table) drawTraffic(traffic string) {
-	// horizontalpadding := t.options.horizontalpadding
 	var x float64 = t.options.horizontalpadding / 2
 	var y float64 = (t.options.fontHeight+t.options.verticalpadding)*float64((len(t.nodes)+2)) + t.options.tableTopPadding + t.fontHeight/2 + t.options.verticalpadding/2
 	t.centerString(traffic, x, y)
@@ -348,7 +438,6 @@ func (t *Table) FormatTraffic(traffic string, time string, workingNode string) s
 }
 
 func (t *Table) drawGeneratedAt() {
-	// horizontalpadding := t.options.horizontalpadding
 	msg := fmt.Sprintf("%s %s", t.i18n.CreateAt, time.Now().Format(time.RFC3339))
 	// https://github.com/golang/go/issues/20455
 	if runtime.GOOS == "android" {
@@ -361,6 +450,21 @@ func (t *Table) drawGeneratedAt() {
 	t.centerString(msg, x, y)
 }
 
+// drawIPLines 把公网 IP 行画在表格框下方(len+4+i 行),前景色,主字体。
+func (t *Table) drawIPLines() {
+	lines := ipLines(t.options.ipInfo)
+	if len(lines) == 0 {
+		return
+	}
+	fr, fg, fb := t.options.fg()
+	t.SetRGB255(fr, fg, fb)
+	x := t.options.horizontalpadding / 2
+	for i, line := range lines {
+		y := (t.options.fontHeight+t.options.verticalpadding)*float64(len(t.nodes)+4+i) + t.options.tableTopPadding + t.fontHeight/2 + t.options.verticalpadding/2
+		t.centerString(line, x, y)
+	}
+}
+
 func (t *Table) drawPoweredBy() {
 	fontSize := int(float64(t.options.fontSize) * t.options.smallFontRatio)
 	fontface, err := LoadFontFaceByBytes(t.options.fontBytes, t.options.fontPath, float64(fontSize))
@@ -368,9 +472,12 @@ func (t *Table) drawPoweredBy() {
 		return
 	}
 	t.SetFontFace(fontface)
+	fr, fg, fb := t.options.fg()
+	t.SetRGB255(fr, fg, fb)
 	msg := constant.Version + " powered by https://github.com/1orz/proxy-speedtest"
+	n := len(ipLines(t.options.ipInfo))
 	var x float64 = float64(t.width) - getWidth(fontface, msg) - t.options.lineWidth
-	var y float64 = (t.options.fontHeight+t.options.verticalpadding)*float64((len(t.nodes)+4)) + t.options.fontHeight*t.options.smallFontRatio
+	var y float64 = (t.options.fontHeight+t.options.verticalpadding)*float64(len(t.nodes)+4+n) + t.options.fontHeight*t.options.smallFontRatio
 	t.DrawString(msg, x, y)
 }
 
@@ -380,83 +487,82 @@ func (t *Table) centerString(s string, x, y float64) {
 
 func (t *Table) drawNodes() {
 	horizontalpadding := t.options.horizontalpadding
-	var x float64 = horizontalpadding / 2
+	fr, fg, fb := t.options.fg()
 	var y float64 = t.options.fontHeight/2 + t.options.verticalpadding/2 + t.options.tableTopPadding + (t.options.fontHeight+t.options.verticalpadding)*2
 	for _, v := range t.nodes {
-		t.centerString(v.Group, x, y)
-		x += t.cellWidths.Group + horizontalpadding
-		t.centerString(v.Remarks, x, y)
-		x += t.cellWidths.Remarks + horizontalpadding
-		adjust := t.cellWidths.Protocol/2 - getWidth(t.fontFace, v.Protocol)/2
-		t.centerString(v.Protocol, x+adjust, y)
-		x += t.cellWidths.Protocol + horizontalpadding
-		adjust = t.cellWidths.Ping/2 - getWidth(t.fontFace, v.Ping)/2
-		t.centerString(v.Ping, x+adjust, y)
-		x += t.cellWidths.Ping + horizontalpadding
-		avgSpeed := download.ByteCountIECTrim(v.AvgSpeed)
-		adjust = t.cellWidths.AvgSpeed/2 - getWidth(t.fontFace, avgSpeed)/2
-		t.centerString(avgSpeed, x+adjust, y)
-		x += t.cellWidths.AvgSpeed + horizontalpadding
-		maxSpeed := download.ByteCountIECTrim(v.MaxSpeed)
-		adjust = t.cellWidths.MaxSpeed/2 - getWidth(t.fontFace, maxSpeed)/2
-		t.centerString(maxSpeed, x+adjust, y)
+		x := horizontalpadding / 2
+		for _, c := range t.columns {
+			s := c.value(v)
+			if c.isSpeed {
+				t.SetRGB255(0, 0, 0) // 亮色块上强制深字,两种主题都可读
+			} else {
+				t.SetRGB255(fr, fg, fb)
+			}
+			if c.centerValue {
+				adjust := c.width/2 - getWidth(t.fontFace, s)/2
+				t.centerString(s, x+adjust, y)
+			} else {
+				t.centerString(s, x, y)
+			}
+			x += c.width + horizontalpadding
+		}
 		y += t.options.fontHeight + t.options.verticalpadding
-		x = horizontalpadding / 2
 	}
+	t.SetRGB255(fr, fg, fb)
 }
 
 func (t *Table) drawSpeed() {
 	padding := t.options.horizontalpadding
 	var lineWidth float64 = t.options.lineWidth
-	var x1 float64 = t.cellWidths.Group + padding + t.cellWidths.Remarks + padding + t.cellWidths.Protocol + padding + t.cellWidths.Ping + padding + lineWidth
-	var x2 float64 = t.cellWidths.Group + padding + t.cellWidths.Remarks + padding + t.cellWidths.Protocol + padding + t.cellWidths.Ping + padding + t.cellWidths.AvgSpeed + padding + lineWidth
-	var y float64 = t.options.tableTopPadding + lineWidth + (t.options.fontHeight+t.options.verticalpadding)*2
-	var wAvg float64 = t.cellWidths.AvgSpeed + padding - lineWidth*2
-	var wMax float64 = t.cellWidths.MaxSpeed + padding - lineWidth*2
 	var h float64 = t.options.fontHeight + t.options.verticalpadding - 2*lineWidth
-	for i := 0; i < len(t.nodes); i++ {
-		t.DrawRectangle(x1, y, wAvg, h)
-		r, g, b := getSpeedColor(t.nodes[i].AvgSpeed, t.options.theme)
-		t.SetRGB255(r, g, b)
-		t.Fill()
-		t.DrawRectangle(x2, y, wMax, h)
-		r, g, b = getSpeedColor(t.nodes[i].MaxSpeed, t.options.theme)
-		t.SetRGB255(r, g, b)
-		t.Fill()
-		y = y + t.options.fontHeight + t.options.verticalpadding
+	var y0 float64 = t.options.tableTopPadding + lineWidth + (t.options.fontHeight+t.options.verticalpadding)*2
+	for ci, c := range t.columns {
+		if !c.isSpeed {
+			continue
+		}
+		x := lineWidth
+		for j := 0; j < ci; j++ {
+			x += t.columns[j].width + padding
+		}
+		w := c.width + padding - 2*lineWidth
+		y := y0
+		for i := 0; i < len(t.nodes); i++ {
+			t.DrawRectangle(x, y, w, h)
+			r, g, b := getSpeedColor(c.speedValue(t.nodes[i]), t.options.theme)
+			t.SetRGB255(r, g, b)
+			t.Fill()
+			y += t.options.fontHeight + t.options.verticalpadding
+		}
 	}
-	t.SetRGB255(0, 0, 0)
 }
 
-func (t *Table) Draw(path string, traffic string) {
-	t.SetRGB255(255, 255, 255)
+// render 执行完整绘制序列(Draw/Encode 共用,避免两处漂移)。
+func (t *Table) render(traffic string) {
+	br, bgc, bb := t.options.bg()
+	t.SetRGB255(br, bgc, bb)
 	t.Clear()
-	t.SetRGB255(0, 0, 0)
+	fr, fg, fb := t.options.fg()
+	t.SetRGB255(fr, fg, fb)
 	t.drawHorizonLines()
 	t.drawVerticalLines()
-	t.drawSpeed()
+	t.drawSpeed()          // 彩色块先画(黑字要盖在上面)
+	t.SetRGB255(fr, fg, fb) // drawSpeed 会残留最后一次 fill 色,恢复为前景色
 	t.drawTitle()
 	t.drawHeader()
 	t.drawNodes()
 	t.drawTraffic(traffic)
 	t.drawGeneratedAt()
+	t.drawIPLines()
 	t.drawPoweredBy()
+}
+
+func (t *Table) Draw(path string, traffic string) {
+	t.render(traffic)
 	t.SavePNG(path)
 }
 
 func (t *Table) Encode(traffic string) ([]byte, error) {
-	t.SetRGB255(255, 255, 255)
-	t.Clear()
-	t.SetRGB255(0, 0, 0)
-	t.drawHorizonLines()
-	t.drawVerticalLines()
-	t.drawSpeed()
-	t.drawTitle()
-	t.drawHeader()
-	t.drawNodes()
-	t.drawTraffic(traffic)
-	t.drawGeneratedAt()
-	t.drawPoweredBy()
+	t.render(traffic)
 	var buf bytes.Buffer
 	err := t.EncodePNG(&buf)
 	if err != nil {
@@ -491,51 +597,6 @@ func getColor(lc []int, rc []int, level float64) (int, int, int) {
 	g := float64(lc[1])*(1-level) + float64(rc[1])*level
 	b := float64(lc[2])*(1-level) + float64(rc[2])*level
 	return int(r), int(g), int(b)
-}
-
-func calcWidth(fontface font.Face, nodes Nodes) *CellWidths {
-	cellWidths := &CellWidths{}
-	if len(nodes) < 1 {
-		return cellWidths
-	}
-	cellWidths.Group = getWidth(fontface, nodes[0].Group)
-	cellWidths.Protocol = getWidth(fontface, "Protocol")
-
-	for _, v := range nodes {
-		width := getWidth(fontface, v.Ping)
-		if cellWidths.Ping < width {
-			cellWidths.Ping = width
-		}
-		width = getWidth(fontface, download.ByteCountIECTrim(v.AvgSpeed))
-		if cellWidths.AvgSpeed < width {
-			cellWidths.AvgSpeed = width
-		}
-		width = getWidth(fontface, download.ByteCountIECTrim(v.MaxSpeed))
-		if cellWidths.MaxSpeed < width {
-			cellWidths.MaxSpeed = width
-		}
-		width = getWidth(fontface, v.Remarks)
-		if cellWidths.Remarks < width {
-			cellWidths.Remarks = width
-		}
-	}
-	if cellWidths.Group < getWidth(fontface, "Group") {
-		cellWidths.Group = getWidth(fontface, "Group")
-	}
-	if cellWidths.Remarks < getWidth(fontface, "Remarks") {
-		cellWidths.Remarks = getWidth(fontface, "Remarks")
-	}
-	if cellWidths.Ping < getWidth(fontface, "Ping") {
-		cellWidths.Ping = getWidth(fontface, "Ping")
-	}
-	if cellWidths.AvgSpeed < getWidth(fontface, "AvgSpeed") {
-		cellWidths.AvgSpeed = getWidth(fontface, "AvgSpeed")
-	}
-	if cellWidths.MaxSpeed < getWidth(fontface, "MaxSpeed") {
-		cellWidths.MaxSpeed = getWidth(fontface, "MaxSpeed")
-	}
-
-	return cellWidths
 }
 
 func calcHeight(fontface font.Face) float64 {

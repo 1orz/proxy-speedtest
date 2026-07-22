@@ -3,8 +3,10 @@ import { Image as ImageIcon, Download } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useTestStore } from '@/store/test-store'
+import { useI18n } from '@/hooks/useI18n'
 
 export function ResultImage() {
+  const t = useI18n()
   const { picdata } = useTestStore()
 
   if (!picdata) {
@@ -31,11 +33,11 @@ export function ResultImage() {
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <ImageIcon className="w-5 h-5 text-primary" />
-              导出图片
+              {t('image.title')}
             </CardTitle>
             <Button onClick={handleDownload} variant="outline" size="sm">
               <Download className="w-4 h-4 mr-2" />
-              下载图片
+              {t('image.download')}
             </Button>
           </div>
         </CardHeader>

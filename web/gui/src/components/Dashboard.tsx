@@ -3,9 +3,11 @@ import { Activity, Gauge, Clock, Download, Wifi } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { useTestStore } from '@/store/test-store'
+import { useI18n } from '@/hooks/useI18n'
 import { bytesToSize, formatSeconds } from '@/lib/utils'
 
 export function Dashboard() {
+  const t = useI18n()
   const { result, testCount, testOkCount, totalTraffic, totalTime, loading } = useTestStore()
   
   const progress = result.length > 0 ? Math.floor((testCount / result.length) * 100) : 0
@@ -35,14 +37,14 @@ export function Dashboard() {
               <div className="p-2 rounded-lg bg-primary/20">
                 <Activity className={`w-4 h-4 text-primary ${loading ? 'animate-pulse' : ''}`} />
               </div>
-              <span className="text-sm font-medium text-muted-foreground">测试进度</span>
+              <span className="text-sm font-medium text-muted-foreground">{t('dash.progress')}</span>
             </div>
             <span className="text-2xl font-bold text-primary">{progress}%</span>
           </div>
           <Progress value={progress} className="h-2" />
           <div className="flex justify-between mt-2 text-xs text-muted-foreground">
-            <span>已完成 {testCount}</span>
-            <span>共 {result.length} 节点</span>
+            <span>{t('dash.done', { n: testCount })}</span>
+            <span>{t('dash.totalNodes', { n: result.length })}</span>
           </div>
         </div>
       </Card>
@@ -50,7 +52,7 @@ export function Dashboard() {
       {/* 成功率 */}
       <StatCard
         icon={Gauge}
-        label="成功率"
+        label={t('dash.successRate')}
         value={`${testOkCount}/${testCount || result.length}`}
         color="success"
         delay={0.1}
@@ -59,7 +61,7 @@ export function Dashboard() {
       {/* 流量 */}
       <StatCard
         icon={Download}
-        label="已用流量"
+        label={t('dash.traffic')}
         value={bytesToSize(totalTraffic)}
         color="accent"
         delay={0.15}
@@ -68,7 +70,7 @@ export function Dashboard() {
       {/* 耗时 */}
       <StatCard
         icon={Clock}
-        label="测试耗时"
+        label={t('dash.duration')}
         value={formatSeconds(totalTime)}
         color="warning"
         delay={0.2}
@@ -82,7 +84,7 @@ export function Dashboard() {
             <div className="p-2 rounded-lg bg-info/20">
               <Wifi className="w-4 h-4 text-info" />
             </div>
-            <span className="text-sm font-medium text-muted-foreground">协议统计</span>
+            <span className="text-sm font-medium text-muted-foreground">{t('dash.protocols')}</span>
           </div>
           <div className="grid grid-cols-2 gap-1 text-xs">
             {Object.entries(protocolStats).map(([protocol, count]) => (

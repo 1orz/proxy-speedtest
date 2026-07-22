@@ -14,19 +14,20 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { useTestStore } from '@/store/test-store'
+import { useI18n } from '@/hooks/useI18n'
 import type { SpeedTestMode } from '@/types'
 
 // 下载测速端点预设。key 必须与后端 download.GetDownloadURL 的 case 保持一致,
 // url 仅用于前端只读展示"当前测速链接",让用户清楚测的是哪个目标。
 const DOWNLOAD_ENDPOINTS = [
-  { key: 'cloudflare', label: 'Cloudflare（全球 Anycast · 10MB，单线程首选）', url: 'https://speed.cloudflare.com/__down?bytes=10000000' },
-  { key: 'hetzner-de', label: 'Hetzner 德国（1GB）', url: 'https://fsn1-speed.hetzner.com/1GB.bin' },
-  { key: 'hetzner-us', label: 'Hetzner 美国（1GB）', url: 'https://ash-speed.hetzner.com/1GB.bin' },
-  { key: 'linode-jp', label: 'Linode 东京（100MB）', url: 'https://speedtest.tokyo2.linode.com/100MB-tokyo2.bin' },
-  { key: 'vultr-sg', label: 'Vultr 新加坡（100MB）', url: 'https://sgp-ping.vultr.com/vultr.com.100MB.bin' },
-  { key: 'ovh-eu', label: 'OVH 欧洲（1GB）', url: 'https://proof.ovh.net/files/1Gb.dat' },
-  { key: 'datapacket-us', label: 'DataPacket 美国（100MB）', url: 'http://lax.download.datapacket.com/100mb.bin' },
-  { key: 'huawei-cn', label: '华为云镜像 · 国内（2.3GB）', url: 'https://mirrors.huaweicloud.com/ubuntu-releases/bionic/ubuntu-18.04.6-desktop-amd64.iso' },
+  { key: 'cloudflare', label: { en: 'Cloudflare (Global Anycast · 10MB, best single-thread)', cn: 'Cloudflare（全球 Anycast · 10MB，单线程首选）' }, url: 'https://speed.cloudflare.com/__down?bytes=10000000' },
+  { key: 'hetzner-de', label: { en: 'Hetzner Germany (1GB)', cn: 'Hetzner 德国（1GB）' }, url: 'https://fsn1-speed.hetzner.com/1GB.bin' },
+  { key: 'hetzner-us', label: { en: 'Hetzner USA (1GB)', cn: 'Hetzner 美国（1GB）' }, url: 'https://ash-speed.hetzner.com/1GB.bin' },
+  { key: 'linode-jp', label: { en: 'Linode Tokyo (100MB)', cn: 'Linode 东京（100MB）' }, url: 'https://speedtest.tokyo2.linode.com/100MB-tokyo2.bin' },
+  { key: 'vultr-sg', label: { en: 'Vultr Singapore (100MB)', cn: 'Vultr 新加坡（100MB）' }, url: 'https://sgp-ping.vultr.com/vultr.com.100MB.bin' },
+  { key: 'ovh-eu', label: { en: 'OVH Europe (1GB)', cn: 'OVH 欧洲（1GB）' }, url: 'https://proof.ovh.net/files/1Gb.dat' },
+  { key: 'datapacket-us', label: { en: 'DataPacket USA (100MB)', cn: 'DataPacket 美国（100MB）' }, url: 'http://lax.download.datapacket.com/100mb.bin' },
+  { key: 'huawei-cn', label: { en: 'Huawei Cloud Mirror · China (2.3GB)', cn: '华为云镜像 · 国内（2.3GB）' }, url: 'https://mirrors.huaweicloud.com/ubuntu-releases/bionic/ubuntu-18.04.6-desktop-amd64.iso' },
 ] as const
 
 const DEFAULT_ENDPOINT = 'cloudflare'
@@ -34,8 +35,8 @@ const DEFAULT_ENDPOINT = 'cloudflare'
 // 上传测速端点(POST 接收即丢弃)。key 必须与后端 download.GetUploadURL 的 case 一致。
 // 可用的公共 sink 稀缺:CF __up 为 Anycast 就近、首选;DLPTest 为美国固定备选。
 const UPLOAD_ENDPOINTS = [
-  { key: 'cloudflare', label: 'Cloudflare __up（全球 Anycast · 就近,首选）', url: 'https://speed.cloudflare.com/__up' },
-  { key: 'dlptest', label: 'DLPTest（美国,备选）', url: 'https://dlptest.com/api/http-post/' },
+  { key: 'cloudflare', label: { en: 'Cloudflare __up (Global Anycast · nearest, preferred)', cn: 'Cloudflare __up（全球 Anycast · 就近,首选）' }, url: 'https://speed.cloudflare.com/__up' },
+  { key: 'dlptest', label: { en: 'DLPTest (USA, fallback)', cn: 'DLPTest（美国,备选）' }, url: 'https://dlptest.com/api/http-post/' },
 ] as const
 
 const CONCURRENCY_PRESETS = [1, 3, 5] as const
@@ -59,6 +60,8 @@ export function TestForm() {
     send,
   } = useTestStore()
 
+  const t = useI18n()
+
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [fileContent, setFileContent] = useState('')
   const [isDragging, setIsDragging] = useState(false)
@@ -73,7 +76,7 @@ export function TestForm() {
 
   const handleFileUpload = useCallback((file: File) => {
     if (file.size > 10 * 1024 * 1024) {
-      alert('文件大小不能超过 10MB')
+      alert(t('form.upload.tooLarge'))
       return
     }
     const reader = new FileReader()
@@ -85,7 +88,7 @@ export function TestForm() {
       // 无法使用的裸文件名,误导用户并导致后端解析失败。上传态改用 uploadedFile 判定。
     }
     reader.readAsText(file)
-  }, [])
+  }, [t])
 
   const handleDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -110,11 +113,11 @@ export function TestForm() {
 
   const handleSubmit = useCallback(() => {
     if (!uploadedFile && !options.subscription) {
-      alert('请输入订阅链接或上传配置文件')
+      alert(t('form.alert.noSub'))
       return
     }
     if (options.downloadSize === 'custom' && !options.downloadUrl.trim()) {
-      alert('已选择“自定义 URL”，请填写测速下载直链')
+      alert(t('form.alert.noCustomUrl'))
       return
     }
 
@@ -134,6 +137,7 @@ export function TestForm() {
       language: options.language,
       fontSize: options.fontSize,
       theme: options.theme,
+      appearance: options.appearance,
       downloadSize: options.downloadSize,
       downloadUrl: options.downloadUrl,
       uploadEnable: options.uploadEnable && options.speedtestMode !== 'pingonly',
@@ -159,13 +163,13 @@ export function TestForm() {
       }
       if (++attempts > 50) {
         disconnect()
-        alert('连接测速服务失败，请重试')
+        alert(t('form.alert.connectFail'))
         return
       }
       setTimeout(checkAndSend, 100)
     }
     checkAndSend()
-  }, [options, uploadedFile, fileContent, reset, connect, send, disconnect])
+  }, [t, options, uploadedFile, fileContent, reset, connect, send, disconnect])
 
   const handleTerminate = useCallback(() => {
     disconnect()
@@ -185,17 +189,17 @@ export function TestForm() {
         <CardHeader className="bg-gradient-to-r from-primary/10 to-accent/10 border-b border-border/50">
           <CardTitle className="flex items-center gap-2">
             <Settings2 className="w-5 h-5 text-primary" />
-            测速配置
+            {t('form.title')}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-6 space-y-6">
           {/* 订阅链接输入 */}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">订阅链接</label>
+            <label className="text-sm font-medium text-muted-foreground">{t('form.subscription')}</label>
             <Input
               value={uploadedFile ? uploadedFile.name : options.subscription}
               onChange={(e) => setOptions({ subscription: e.target.value })}
-              placeholder="支持 V2Ray/Trojan/SS/SSR/Clash/VLESS 订阅链接"
+              placeholder={t('form.subscription.ph')}
               disabled={loading || !!uploadedFile}
             />
           </div>
@@ -223,7 +227,7 @@ export function TestForm() {
                 />
                 <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  拖拽配置文件到此处，或<span className="text-primary cursor-pointer">点击上传</span>
+                  {t('form.upload.dnd')}<span className="text-primary cursor-pointer">{t('form.upload.click')}</span>
                 </p>
               </motion.div>
             )}
@@ -249,8 +253,8 @@ export function TestForm() {
           {/* 并发数:预设 1/3/5 + 自定义 */}
           <div className="space-y-2">
             <div className="flex items-baseline gap-2 flex-wrap">
-              <label className="text-sm font-medium text-muted-foreground">并发数</label>
-              <span className="text-xs text-muted-foreground">同时测试的节点数量</span>
+              <label className="text-sm font-medium text-muted-foreground">{t('form.concurrency')}</label>
+              <span className="text-xs text-muted-foreground">{t('form.concurrency.hint')}</span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {CONCURRENCY_PRESETS.map((n) => (
@@ -267,7 +271,7 @@ export function TestForm() {
                 </Button>
               ))}
               <div className="flex items-center gap-2 pl-2">
-                <span className="text-xs text-muted-foreground">自定义</span>
+                <span className="text-xs text-muted-foreground">{t('form.custom')}</span>
                 <NumberField
                   min={1}
                   max={50}
@@ -284,8 +288,8 @@ export function TestForm() {
           {/* 下载线程数:单节点测速内的并行连接数(与"并发数"是两个维度) */}
           <div className="space-y-2">
             <div className="flex items-baseline gap-2 flex-wrap">
-              <label className="text-sm font-medium text-muted-foreground">下载线程数</label>
-              <span className="text-xs text-muted-foreground">单个节点测速时的并行连接数,聚合吞吐;多线程请配 1GB 端点(Hetzner/OVH),Cloudflare 小文件多线程易被限流</span>
+              <label className="text-sm font-medium text-muted-foreground">{t('form.threads')}</label>
+              <span className="text-xs text-muted-foreground">{t('form.threads.hint')}</span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {THREAD_PRESETS.map((n) => (
@@ -306,7 +310,7 @@ export function TestForm() {
 
           {/* 测试项:三段切换 */}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">测试项</label>
+            <label className="text-sm font-medium text-muted-foreground">{t('form.testItems')}</label>
             <div className="grid grid-cols-3 gap-1 rounded-lg bg-secondary/50 p-1">
               {TEST_MODES.map((m) => (
                 <button
@@ -321,7 +325,7 @@ export function TestForm() {
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  {m.label}
+                  {m.value === 'all' ? t('form.mode.all') : m.label}
                 </button>
               ))}
             </div>
@@ -330,7 +334,7 @@ export function TestForm() {
           {/* 测试时长 + 去重 */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-muted-foreground">测试时长 (秒)</label>
+              <label className="text-sm font-medium text-muted-foreground">{t('form.duration')}</label>
               <NumberField
                 min={5}
                 max={60}
@@ -349,7 +353,7 @@ export function TestForm() {
                   disabled={loading}
                 />
                 <label htmlFor="unique" className="text-sm font-medium cursor-pointer">
-                  去除重复节点
+                  {t('form.unique')}
                 </label>
               </div>
             </div>
@@ -357,18 +361,18 @@ export function TestForm() {
 
           {/* 自定义组名 */}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">自定义组名</label>
+            <label className="text-sm font-medium text-muted-foreground">{t('form.groupname')}</label>
             <Input
               value={options.groupname}
               onChange={(e) => setOptions({ groupname: e.target.value })}
-              placeholder="可选，留空使用默认值"
+              placeholder={t('form.groupname.ph')}
               disabled={loading}
             />
           </div>
 
           {/* 下载测速端点 */}
           <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">下载测速端点</label>
+            <label className="text-sm font-medium text-muted-foreground">{t('form.downloadEndpoint')}</label>
             <Select
               value={options.downloadSize}
               onValueChange={(v) => {
@@ -386,17 +390,17 @@ export function TestForm() {
               <SelectContent>
                 {DOWNLOAD_ENDPOINTS.map((e) => (
                   <SelectItem key={e.key} value={e.key}>
-                    {e.label}
+                    {options.language === 'cn' ? e.label.cn : e.label.en}
                   </SelectItem>
                 ))}
-                <SelectItem value="custom">自定义 URL</SelectItem>
+                <SelectItem value="custom">{t('form.customUrl')}</SelectItem>
               </SelectContent>
             </Select>
             {options.downloadSize === 'custom' ? (
               <Input
                 value={options.downloadUrl}
                 onChange={(e) => setOptions({ downloadUrl: e.target.value })}
-                placeholder="https://example.com/100mb.bin （需可通过代理访问的大文件直链）"
+                placeholder={t('form.downloadUrl.ph')}
                 disabled={loading}
                 className="font-mono text-xs"
               />
@@ -405,12 +409,12 @@ export function TestForm() {
                 value={currentEndpointUrl}
                 readOnly
                 tabIndex={-1}
-                aria-label="当前测速链接"
+                aria-label={t('form.currentUrl.aria')}
                 className="font-mono text-xs text-muted-foreground cursor-not-allowed focus-visible:ring-0"
               />
             )}
             <p className="text-xs text-muted-foreground">
-              当前测速链接如上；预设不可修改，选“自定义 URL”后可填写自己的大文件直链。
+              {t('form.downloadEndpoint.hint')}
             </p>
           </div>
 
@@ -424,12 +428,12 @@ export function TestForm() {
                 disabled={loading || options.speedtestMode === 'pingonly'}
               />
               <label htmlFor="uploadEnable" className="text-sm font-medium cursor-pointer">
-                测上传速度
+                {t('form.uploadTest')}
               </label>
               <span className="text-xs text-muted-foreground">
                 {options.speedtestMode === 'pingonly'
-                  ? '（需开启测速项才可用）'
-                  : '在下载之后追加上传测速,会增加每节点耗时'}
+                  ? t('form.uploadTest.disabled')
+                  : t('form.uploadTest.hint')}
               </span>
             </div>
             {options.uploadEnable && options.speedtestMode !== 'pingonly' && (
@@ -445,7 +449,7 @@ export function TestForm() {
                   <SelectContent>
                     {UPLOAD_ENDPOINTS.map((e) => (
                       <SelectItem key={e.key} value={e.key}>
-                        {e.label}
+                        {options.language === 'cn' ? e.label.cn : e.label.en}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -454,11 +458,11 @@ export function TestForm() {
                   value={UPLOAD_ENDPOINTS.find((e) => e.key === options.uploadSize)?.url ?? ''}
                   readOnly
                   tabIndex={-1}
-                  aria-label="当前上传链接"
+                  aria-label={t('form.currentUploadUrl.aria')}
                   className="font-mono text-xs text-muted-foreground cursor-not-allowed focus-visible:ring-0"
                 />
                 <p className="text-xs text-muted-foreground">
-                  上传端点稀缺(静态端点 POST 会 405);仅这两个为实测可用的丢弃型 sink。
+                  {t('form.uploadEndpoint.hint')}
                 </p>
               </div>
             )}
@@ -531,6 +535,7 @@ interface ActionButtonsProps {
 }
 
 function ActionButtons({ loading, onSubmit, onTerminate }: ActionButtonsProps) {
+  const t = useI18n()
   return (
     <div className="flex gap-3 pt-4">
       <Button
@@ -546,12 +551,12 @@ function ActionButtons({ loading, onSubmit, onTerminate }: ActionButtonsProps) {
               transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
               className="w-4 h-4 border-2 border-current border-t-transparent rounded-full"
             />
-            测速中...
+            {t('form.testing')}
           </>
         ) : (
           <>
             <Play className="w-4 h-4" />
-            开始测速
+            {t('form.start')}
           </>
         )}
       </Button>
@@ -561,7 +566,7 @@ function ActionButtons({ loading, onSubmit, onTerminate }: ActionButtonsProps) {
         variant="destructive"
       >
         <Square className="w-4 h-4" />
-        终止
+        {t('form.terminate')}
       </Button>
     </div>
   )

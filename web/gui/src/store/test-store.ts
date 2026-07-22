@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { TestNode, TestOptions, WebSocketMessage } from '@/types'
+import { tt } from '@/lib/i18n'
 
 interface TestState {
   // 测试状态
@@ -11,6 +12,12 @@ interface TestState {
   totalTraffic: number
   totalTime: number
   picdata: string
+
+  // 公网出口(测速机自身,来自后端 ipinfo 消息)
+  ipv4: string
+  ipv6: string
+  ipv4geo: string
+  ipv6geo: string
 
   // 实时速率(测速进行中,驱动实时表盘)
   currentTestingId: number | null
@@ -57,9 +64,10 @@ const defaultOptions: TestOptions = {
   groupname: '',
   speedtestMode: 'all',
   sortMethod: 'rspeed',
-  language: 'en',
+  language: 'cn',
   fontSize: 24,
   theme: 'rainbow',
+  appearance: 'dark',
   testMode: 2,
   downloadSize: 'cloudflare',
   downloadUrl: '',
@@ -75,6 +83,10 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
   totalTraffic: 0,
   totalTime: 0,
   picdata: '',
+  ipv4: '',
+  ipv6: '',
+  ipv4geo: '',
+  ipv6geo: '',
   currentTestingId: null,
   currentDirection: null,
   liveDownloadBps: 0,
@@ -115,6 +127,10 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
     totalTraffic: 0,
     totalTime: 0,
     picdata: '',
+    ipv4: '',
+    ipv6: '',
+    ipv4geo: '',
+    ipv6geo: '',
     currentTestingId: null,
     currentDirection: null,
     liveDownloadBps: 0,
@@ -158,6 +174,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
   handleMessage: (json) => {
     const state = get()
     const id = json.id
+    const testing = tt(state.options.language, 'status.testing')
 
     switch (json.info) {
       case 'started':
@@ -199,7 +216,15 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
         break
       case 'startping':
         set({ currentTestingId: id })
-        state.updateNode(id, { ping: '测试中...', testing: true })
+        state.updateNode(id, { ping: testing, testing: true })
+        break
+      case 'ipinfo':
+        set({
+          ipv4: json.ipv4 || '',
+          ipv6: json.ipv6 || '',
+          ipv4geo: json.ipv4geo || '',
+          ipv6geo: json.ipv6geo || '',
+        })
         break
       case 'gotping':
         state.incrementTestCount()
@@ -211,7 +236,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
         break
       case 'startspeed':
         set({ currentTestingId: id, currentDirection: 'down', liveDownloadBps: 0 })
-        state.updateNode(id, { speed: '测试中...', maxspeed: '测试中...', testing: true })
+        state.updateNode(id, { speed: testing, maxspeed: testing, testing: true })
         break
       case 'gotspeed':
         state.addTraffic(json.traffic || 0)
@@ -223,7 +248,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
         break
       case 'startupload':
         set({ currentTestingId: id, currentDirection: 'up', liveUploadBps: 0 })
-        state.updateNode(id, { uploadspeed: '测试中...', maxuploadspeed: '测试中...', testing: true })
+        state.updateNode(id, { uploadspeed: testing, maxuploadspeed: testing, testing: true })
         break
       case 'gotupload':
         state.addTraffic(json.traffic || 0)

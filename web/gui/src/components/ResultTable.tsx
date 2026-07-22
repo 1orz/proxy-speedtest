@@ -24,9 +24,11 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useTestStore } from '@/store/test-store'
 import { cn, getSpeed, getSpeedColor, copyToClipboard, downloadFile, bytesToSize, formatSeconds } from '@/lib/utils'
+import { useI18n } from '@/hooks/useI18n'
 import type { TestNode } from '@/types'
 
 export function ResultTable() {
+  const t = useI18n()
   const { result, selectedNodes, setSelectedNodes, options, totalTraffic, totalTime } = useTestStore()
   const [sorting, setSorting] = useState<SortingState>([])
   const [globalFilter, setGlobalFilter] = useState('')
@@ -60,7 +62,7 @@ export function ResultTable() {
       },
       {
         accessorKey: 'remark',
-        header: '节点名称',
+        header: t('col.remark'),
         cell: ({ row }) => (
           <div className="max-w-[300px] truncate font-medium" title={row.original.remark}>
             {row.original.remark}
@@ -70,7 +72,7 @@ export function ResultTable() {
       },
       {
         accessorKey: 'server',
-        header: '服务器',
+        header: t('col.server'),
         cell: ({ row }) => (
           <div className="text-muted-foreground font-mono text-xs">
             {row.original.server}
@@ -80,7 +82,7 @@ export function ResultTable() {
       },
       {
         accessorKey: 'protocol',
-        header: '协议',
+        header: t('col.protocol'),
         cell: ({ row }) => (
           <span className="px-2 py-1 rounded-md bg-secondary text-xs font-medium uppercase">
             {row.original.protocol}
@@ -90,7 +92,7 @@ export function ResultTable() {
       },
       {
         accessorKey: 'ping',
-        header: 'Ping',
+        header: t('col.ping'),
         cell: ({ row }) => {
           const ping = row.original.ping
           const isNumber = typeof ping === 'number'
@@ -117,7 +119,7 @@ export function ResultTable() {
       },
       {
         accessorKey: 'speed',
-        header: '平均速度',
+        header: t('col.speed'),
         cell: ({ row }) => {
           const speed = row.original.speed
           const speedValue = getSpeed(speed)
@@ -141,37 +143,11 @@ export function ResultTable() {
         },
         size: 120,
       },
-      {
-        accessorKey: 'maxspeed',
-        header: '最大速度',
-        cell: ({ row }) => {
-          const speed = row.original.maxspeed
-          const speedValue = getSpeed(speed)
-          const color = !isNaN(speedValue) && speedValue > 0 ? getSpeedColor(speedValue, options.theme) : undefined
-          return (
-            <span
-              className={cn(
-                'font-mono px-2 py-1 rounded',
-                row.original.testing && 'animate-pulse text-primary'
-              )}
-              style={color ? { backgroundColor: color, color: '#000' } : undefined}
-            >
-              {speed}
-            </span>
-          )
-        },
-        sortingFn: (a, b) => {
-          const speedA = getSpeed(a.original.maxspeed)
-          const speedB = getSpeed(b.original.maxspeed)
-          return (isNaN(speedB) ? -1 : speedB) - (isNaN(speedA) ? -1 : speedA)
-        },
-        size: 120,
-      },
       ...(hasUpload
         ? ([
             {
               accessorKey: 'uploadspeed',
-              header: '上传速度',
+              header: t('col.upload'),
               cell: ({ row }) => {
                 const speed = row.original.uploadspeed ?? ''
                 const speedValue = getSpeed(speed)
@@ -192,33 +168,10 @@ export function ResultTable() {
               },
               size: 120,
             },
-            {
-              accessorKey: 'maxuploadspeed',
-              header: '最大上传',
-              cell: ({ row }) => {
-                const speed = row.original.maxuploadspeed ?? ''
-                const speedValue = getSpeed(speed)
-                const color = !isNaN(speedValue) && speedValue > 0 ? getSpeedColor(speedValue, options.theme) : undefined
-                return (
-                  <span
-                    className={cn('font-mono px-2 py-1 rounded', row.original.testing && 'animate-pulse text-primary')}
-                    style={color ? { backgroundColor: color, color: '#000' } : undefined}
-                  >
-                    {speed || '-'}
-                  </span>
-                )
-              },
-              sortingFn: (a, b) => {
-                const sa = getSpeed(a.original.maxuploadspeed ?? '')
-                const sb = getSpeed(b.original.maxuploadspeed ?? '')
-                return (isNaN(sb) ? -1 : sb) - (isNaN(sa) ? -1 : sa)
-              },
-              size: 120,
-            },
           ] as ColumnDef<TestNode>[])
         : []),
     ],
-    [options.theme, hasUpload]
+    [t, options.theme, hasUpload]
   )
 
   const table = useReactTable({
@@ -250,14 +203,14 @@ export function ResultTable() {
   const handleCopyLinks = useCallback(async () => {
     const links = selectedNodes.map(n => n.link).join('\n')
     await copyToClipboard(links)
-    alert('链接已复制到剪贴板')
-  }, [selectedNodes])
+    alert(t('table.copied'))
+  }, [t, selectedNodes])
 
   const handleCopyAvailable = useCallback(async () => {
     const links = result.filter(n => typeof n.ping === 'number' && n.ping > 0).map(n => n.link).join('\n')
     await copyToClipboard(links)
-    alert('可用节点链接已复制到剪贴板')
-  }, [result])
+    alert(t('table.copiedAvailable'))
+  }, [t, result])
 
   const handleExportNodes = useCallback(() => {
     const data = selectedNodes.map(n => `# ${n.remark}\t${n.ping}\t${n.speed}\t${n.maxspeed}\n${n.link}`).join('\n')
@@ -306,14 +259,14 @@ export function ResultTable() {
           <CardHeader className="border-b border-border/50">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <CardTitle className="flex items-center gap-2">
-                测试结果
+                {t('table.title')}
                 <span className="text-sm font-normal text-muted-foreground">
-                  ({result.length} 节点)
+                  {t('table.count', { n: result.length })}
                 </span>
               </CardTitle>
               <div className="flex items-center gap-3">
                 <Input
-                  placeholder="搜索节点..."
+                  placeholder={t('table.search')}
                   value={globalFilter}
                   onChange={(e) => setGlobalFilter(e.target.value)}
                   className="w-64"
@@ -323,35 +276,35 @@ export function ResultTable() {
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" className="gap-2">
                         <MoreHorizontal className="w-4 h-4" />
-                        操作
+                        {t('table.actions')}
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-48">
                       <DropdownMenuItem onClick={handleCopyAvailable}>
                         <Copy className="w-4 h-4 mr-2" />
-                        复制可用节点
+                        {t('table.copyAvailable')}
                       </DropdownMenuItem>
                       {selectedNodes.length > 0 && (
                         <>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={handleCopyLinks}>
                             <Copy className="w-4 h-4 mr-2" />
-                            复制选中 ({selectedNodes.length})
+                            {t('table.copySelected', { n: selectedNodes.length })}
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={handleExportNodes}>
                             <Download className="w-4 h-4 mr-2" />
-                            导出选中节点
+                            {t('table.exportSelected')}
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={handleShowQRCode}>
                             <QrCode className="w-4 h-4 mr-2" />
-                            显示二维码
+                            {t('table.showQr')}
                           </DropdownMenuItem>
                         </>
                       )}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onClick={handleExportResult}>
                         <FileJson className="w-4 h-4 mr-2" />
-                        导出结果 JSON
+                        {t('table.exportJson')}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -438,11 +391,12 @@ interface QRCodeDialogProps {
 }
 
 function QRCodeDialog({ nodes, open, onClose }: QRCodeDialogProps) {
+  const t = useI18n()
   return (
     <Dialog open={open} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>节点二维码</DialogTitle>
+          <DialogTitle>{t('qr.title')}</DialogTitle>
         </DialogHeader>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 p-4">
           {nodes.map((node) => (
@@ -457,7 +411,7 @@ function QRCodeDialog({ nodes, open, onClose }: QRCodeDialogProps) {
                 {node.remark}
               </p>
               <p className="text-xs text-muted-foreground">
-                {node.ping}ms | {node.speed} | {node.maxspeed}
+                {node.ping}ms | {node.speed}
               </p>
             </div>
           ))}
