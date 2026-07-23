@@ -31,10 +31,16 @@ interface TestState {
   
   // 本次运行是否启用了上传(测试开始时快照,用于让上传列一开始就出现)
   runUploadEnabled: boolean
+  // 本次运行的测试模式快照(结果展示按它判定 ping/速度是否适用;避免测完改表单模式导致回填错乱)
+  runMode: TestOptions['speedtestMode']
 
-  // 结果表格的用户偏好(持久化):列顺序、列宽
+  // 结果表格的用户偏好(持久化):列顺序、列宽、列可见性
   columnOrder: string[]
   columnSizing: Record<string, number>
+  columnVisibility: Record<string, boolean>
+
+  // 一键隐私保护(持久化):遮蔽界面/图片里的 IP 与服务器地址
+  privacy: boolean
 
   // WebSocket
   ws: WebSocket | null
@@ -58,6 +64,8 @@ interface TestState {
   setRunUploadEnabled: (v: boolean) => void
   setColumnOrder: (order: string[]) => void
   setColumnSizing: (sizing: Record<string, number>) => void
+  setColumnVisibility: (visibility: Record<string, boolean>) => void
+  setPrivacy: (v: boolean) => void
   resetTableLayout: () => void
   reset: () => void
   
@@ -69,12 +77,12 @@ interface TestState {
 }
 
 const defaultOptions: TestOptions = {
-  subscription: '',
+  subscriptions: [{ group: '', url: '' }],
+  headers: [],
   concurrency: 2,
   threads: 1,
   timeout: 15,
   unique: true,
-  groupname: '',
   speedtestMode: 'all',
   sortMethod: 'rspeed',
   language: 'cn',
@@ -87,7 +95,9 @@ const defaultOptions: TestOptions = {
   uploadEnable: false,
   uploadSize: 'cloudflare',
   uploadUrl: '',
-  workerKey: '',
+  headersUnified: true,
+  downloadHeaders: [],
+  uploadHeaders: [],
 }
 
 export const useTestStore = create<TestState>()(persist((set, get) => ({
@@ -103,8 +113,11 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
   ipv4geo: '',
   ipv6geo: '',
   runUploadEnabled: false,
+  runMode: 'all',
   columnOrder: [],
   columnSizing: {},
+  columnVisibility: {},
+  privacy: false,
   currentTestingId: null,
   currentDirection: null,
   liveDownloadBps: 0,
@@ -192,7 +205,9 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
   setRunUploadEnabled: (v) => set({ runUploadEnabled: v }),
   setColumnOrder: (order) => set({ columnOrder: order }),
   setColumnSizing: (sizing) => set({ columnSizing: sizing }),
-  resetTableLayout: () => set({ columnOrder: [], columnSizing: {} }),
+  setColumnVisibility: (visibility) => set({ columnVisibility: visibility }),
+  setPrivacy: (v) => set({ privacy: v }),
+  resetTableLayout: () => set({ columnOrder: [], columnSizing: {}, columnVisibility: {} }),
 
   reset: () => set({
     result: [],
@@ -261,7 +276,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
       case 'gotserver':
         state.updateNode(id, {
           id,
-          group: state.options.groupname || json.group || '',
+          group: json.group || '',
           remark: json.remarks || '',
           server: json.server || '',
           protocol: json.protocol || '',
@@ -276,7 +291,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
         if (json.servers) {
           const nodes: TestNode[] = json.servers.map((s) => ({
             id: s.id,
-            group: state.options.groupname || s.group || '',
+            group: s.group || '',
             remark: s.remarks || '',
             server: s.server || '',
             protocol: s.protocol || '',
@@ -334,7 +349,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
         })
         break
       case 'endone':
-        state.updateNode(id, { testing: false })
+        state.updateNode(id, { testing: false, tested: true })
         break
       case 'picdata':
         state.setPicdata(json.data || '')
@@ -349,7 +364,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
           // 兜底:清掉任何残留 testing:true 的节点(若某 id 的 endone 未送达),
           // 否则该行的选择复选框会永久禁用
           result: s.result.some((n) => n.testing)
-            ? s.result.map((n) => (n.testing ? { ...n, testing: false } : n))
+            ? s.result.map((n) => (n.testing ? { ...n, testing: false, tested: true } : n))
             : s.result,
         }))
         break
@@ -368,15 +383,42 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
     options: state.options,
     columnOrder: state.columnOrder,
     columnSizing: state.columnSizing,
+    columnVisibility: state.columnVisibility,
+    privacy: state.privacy,
   }),
   // 用默认值补齐历史存档中缺失的字段,避免新增选项时读到 undefined
   merge: (persisted, current) => {
     const p = (persisted ?? {}) as Partial<TestState>
+    const po = (p.options ?? {}) as Record<string, unknown>
+    const options = { ...current.options, ...(p.options ?? {}) }
+    // 迁移旧版单一 subscription/groupname 到新的 subscriptions[]
+    const hasReal = Array.isArray(options.subscriptions) && options.subscriptions.some((e) => e && e.url && e.url.trim())
+    if (!hasReal && typeof po.subscription === 'string' && po.subscription.trim()) {
+      options.subscriptions = [{ group: typeof po.groupname === 'string' ? po.groupname : '', url: po.subscription }]
+    }
+    if (!Array.isArray(options.subscriptions) || options.subscriptions.length === 0) {
+      options.subscriptions = [{ group: '', url: '' }]
+    }
+    // 迁移旧版单一 headers 到 downloadHeaders(统一模式);旧 workerKey 已并入自定义请求头,忽略
+    if (!Array.isArray(options.downloadHeaders)) options.downloadHeaders = []
+    if (!Array.isArray(options.uploadHeaders)) options.uploadHeaders = []
+    if (typeof options.headersUnified !== 'boolean') options.headersUnified = true
+    if (options.downloadHeaders.length === 0 && Array.isArray(po.headers) && (po.headers as unknown[]).length > 0) {
+      options.downloadHeaders = po.headers as TestOptions['downloadHeaders']
+    }
+    // 把持久化的并发/线程数吸附到滑块档位,避免气泡数字与滑块位置不一致
+    const CONC = [1, 2, 3, 5, 8, 16, 32, 50]
+    const THR = [1, 2, 4, 8, 16, 32, 64]
+    const snap = (v: number, steps: number[]) => steps.reduce((b, s) => (Math.abs(s - v) < Math.abs(b - v) ? s : b), steps[0])
+    if (typeof options.concurrency === 'number') options.concurrency = snap(options.concurrency, CONC)
+    if (typeof options.threads === 'number') options.threads = snap(options.threads, THR)
     return {
       ...current,
-      options: { ...current.options, ...(p.options ?? {}) },
+      options,
       columnOrder: p.columnOrder ?? current.columnOrder,
       columnSizing: p.columnSizing ?? current.columnSizing,
+      columnVisibility: p.columnVisibility ?? current.columnVisibility,
+      privacy: p.privacy ?? current.privacy,
     }
   },
 }))

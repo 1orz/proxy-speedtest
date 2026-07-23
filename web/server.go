@@ -20,6 +20,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/1orz/proxy-speedtest/config"
+	C "github.com/1orz/proxy-speedtest/constant"
 	"github.com/1orz/proxy-speedtest/download"
 	"github.com/1orz/proxy-speedtest/utils"
 	"github.com/1orz/proxy-speedtest/web/render"
@@ -31,6 +32,7 @@ func ServeFile(port int, bind string) error {
 	// TODO: Mobile UI
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", serverFile)
+	mux.HandleFunc("/version", version)
 	mux.HandleFunc("/test", updateTest)
 	mux.HandleFunc("/renderImage", renderImage)
 	mux.HandleFunc("/getSubscriptionLink", getSubscriptionLink)
@@ -103,6 +105,15 @@ func serverFile(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(w, r)
 }
 
+// version 返回后端版本信息(编译期由 ldflags 注入,默认见 constant.Version),供前端徽标显示。
+func version(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"version":   C.Version,
+		"buildTime": C.BuildTime,
+	})
+}
+
 func updateTest(w http.ResponseWriter, r *http.Request) {
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -119,7 +130,7 @@ func updateTest(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		// log.Printf("recv: %s", message)
-		links, options, err := parseMessage(message)
+		links, groups, options, err := parseMessage(message)
 		if err != nil {
 			msg := `{"info": "error", "reason": "invalidsub"}`
 			c.WriteMessage(mt, []byte(msg))
@@ -127,8 +138,9 @@ func updateTest(w http.ResponseWriter, r *http.Request) {
 		}
 		if options.Unique {
 			uniqueLinks := []string{}
+			uniqueGroups := []string{}
 			uniqueMap := map[string]struct{}{}
-			for _, link := range links {
+			for i, link := range links {
 				cfg, err := config.Link2Config(link)
 				if err != nil {
 					continue
@@ -136,15 +148,24 @@ func updateTest(w http.ResponseWriter, r *http.Request) {
 				key := fmt.Sprintf("%s%d%s%s%s", cfg.Server, cfg.Port, cfg.Password, cfg.Protocol, cfg.SNI)
 				if _, ok := uniqueMap[key]; !ok {
 					uniqueLinks = append(uniqueLinks, link)
+					if i < len(groups) {
+						uniqueGroups = append(uniqueGroups, groups[i])
+					} else {
+						uniqueGroups = append(uniqueGroups, "")
+					}
 					uniqueMap[key] = struct{}{}
 				}
 			}
 			links = uniqueLinks
+			if groups != nil {
+				groups = uniqueGroups
+			}
 		}
 		p := ProfileTest{
 			Writer:      c,
 			MessageType: mt,
 			Links:       links,
+			Groups:      groups,
 			Options:     options,
 		}
 		go p.testAll(ctx)

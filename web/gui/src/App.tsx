@@ -3,15 +3,14 @@ import { AnimatePresence } from 'motion/react'
 import { Header } from '@/components/Header'
 import { TestForm } from '@/components/TestForm'
 import { LiveMeter } from '@/components/LiveMeter'
-import { Dashboard } from '@/components/Dashboard'
-import { IPInfoCard } from '@/components/IPInfoCard'
-import { ResultTable } from '@/components/ResultTable'
-import { ResultImage } from '@/components/ResultImage'
+import { ResultCard } from '@/components/ResultCard'
 import { useTimer } from '@/hooks/useTimer'
+import { useVersion } from '@/hooks/useVersion'
 import { useTestStore } from '@/store/test-store'
 
 function App() {
   useTimer()
+  const version = useVersion()
   const loading = useTestStore((s) => s.loading)
   const appearance = useTestStore((s) => s.options.appearance)
 
@@ -27,10 +26,7 @@ function App() {
       <main className="container mx-auto px-4 pb-12 space-y-6">
         <TestForm />
         <AnimatePresence>{loading && <LiveMeter key="live-meter" />}</AnimatePresence>
-        <Dashboard />
-        <IPInfoCard />
-        <ResultTable />
-        <ResultImage />
+        <ResultCard />
       </main>
 
       {/* 底部装饰 */}
@@ -43,8 +39,9 @@ function App() {
             rel="noopener noreferrer"
             className="text-primary hover:underline"
           >
-            proxy-speedtest
-          </a>
+            LiteSpeedTest
+          </a>{' '}
+          <span className="text-muted-foreground">{version}</span>
         </p>
       </footer>
     </div>

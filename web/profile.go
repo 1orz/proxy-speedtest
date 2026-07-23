@@ -267,8 +267,21 @@ const (
 	RETEST
 )
 
+// SubEntry 是一条「订阅链接 + 组名」输入。组名可空(空则回退到默认组名)。
+type SubEntry struct {
+	Group        string `json:"group"`
+	Subscription string `json:"subscription"`
+}
+
+// HeaderKV 是一条用户自定义请求头(应用到下载/上传请求)。Name 为空则忽略。
+type HeaderKV struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
 type ProfileTestOptions struct {
 	GroupName       string        `json:"group"`
+	Subscriptions   []SubEntry    `json:"subscriptions"` // 多订阅(各带可选组名);非空时优先于 Subscription
 	SpeedTestMode   string        `json:"speedtestMode"` // speedonly pingonly all
 	SortMethod      string        `json:"sortMethod"`    // speed rspeed ping rping
 	Concurrency     int           `json:"concurrency"`
@@ -292,7 +305,8 @@ type ProfileTestOptions struct {
 	UploadURL       string        `json:"uploadUrl"`                // custom upload URL (POST sink); optional
 	UploadSize      string        `json:"uploadSize"`               // upload endpoint preset key (see download.GetUploadURL)
 	Appearance      string        `json:"appearance"`               // image appearance: "light"(default) | "dark"
-	WorkerKey       string        `json:"workerKey"`                // 自建 Cloudflare Worker 端点的 X-Speedtest-Key 鉴权值
+	DownloadHeaders []HeaderKV    `json:"downloadHeaders"`          // 用户自定义下载请求头(可选)
+	UploadHeaders   []HeaderKV    `json:"uploadHeaders"`            // 用户自定义上传请求头(可选)
 }
 
 type CMDOptions struct {
@@ -316,11 +330,13 @@ type JSONOutput struct {
 	LinksCount   int                `json:"linksCount"`
 }
 
-func parseMessage(message []byte) ([]string, *ProfileTestOptions, error) {
+// parseMessage 返回 links 及与之对齐的 groups(每链接组名,可空)。
+// 单订阅路径 groups 为 nil(所有节点用 Options.GroupName)。
+func parseMessage(message []byte) ([]string, []string, *ProfileTestOptions, error) {
 	options := &ProfileTestOptions{}
 	err := json.Unmarshal(message, options)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	options.Timeout = time.Duration(int(options.Timeout)) * time.Second
 	if options.GroupName == "?empty?" || options.GroupName == "" {
@@ -342,14 +358,50 @@ func parseMessage(message []byte) ([]string, *ProfileTestOptions, error) {
 		options.UploadSize = "cloudflare"
 	}
 	if options.TestMode == RETEST {
-		return options.Links, options, nil
+		return options.Links, nil, options, nil
 	}
 	options.TestMode = ALLTEST
+
+	// 多订阅:逐条抓取/解析,拼出 links 及对齐的 groups;单条失败跳过不影响其它。
+	if len(options.Subscriptions) > 0 {
+		var links []string
+		var groups []string
+		for _, e := range options.Subscriptions {
+			sub := strings.TrimSpace(e.Subscription)
+			if sub == "" {
+				continue
+			}
+			ls, err := ParseLinks(sub)
+			if err != nil || len(ls) == 0 {
+				slog.Debug("skip subscription entry", "group", e.Group, "err", err, "count", len(ls))
+				continue
+			}
+			g := strings.TrimSpace(e.Group)
+			for _, l := range ls {
+				links = append(links, l)
+				groups = append(groups, g)
+			}
+		}
+		if len(links) == 0 {
+			return nil, nil, nil, fmt.Errorf("no profile found")
+		}
+		return links, groups, options, nil
+	}
+
+	// 单订阅(兼容旧前端)
 	links, err := ParseLinks(options.Subscription)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return links, options, nil
+	return links, nil, options, nil
+}
+
+// groupFor 返回第 i 个链接的组名:优先用对齐的 Groups[i](非空),否则回退默认组名。
+func (p *ProfileTest) groupFor(i int) string {
+	if i >= 0 && i < len(p.Groups) && p.Groups[i] != "" {
+		return p.Groups[i]
+	}
+	return p.Options.GroupName
 }
 
 type MessageWriter interface {
@@ -376,6 +428,7 @@ type ProfileTest struct {
 	Options     *ProfileTestOptions
 	MessageType int
 	Links       []string
+	Groups      []string // 与 Links 对齐的每链接组名(可空);nil 或空则该节点回退到 Options.GroupName
 	mu          sync.Mutex
 	wg          sync.WaitGroup // wait for all to finish
 
@@ -500,7 +553,11 @@ func (p *ProfileTest) testAll(ctx context.Context) (render.Nodes, error) {
 			end = linksCount
 		}
 		links := p.Links[i:end]
-		msg := gotserversMsg(i, links, p.Options.GroupName)
+		groups := make([]string, len(links))
+		for j := range links {
+			groups[j] = p.groupFor(i + j)
+		}
+		msg := gotserversMsg(i, links, groups)
 		p.WriteMessage(msg)
 		i += step
 	}
@@ -658,7 +715,7 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 	if err != nil {
 		node := render.Node{
 			Id:       index,
-			Group:    p.Options.GroupName,
+			Group:    p.groupFor(index),
 			Remarks:  remarks,
 			Protocol: protocol,
 			Ping:     fmt.Sprintf("%d", elapse),
@@ -671,7 +728,7 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 	}
 	p.WriteMessage(getMsgByte(index, "startspeed"))
 	downloadURL := download.GetDownloadURL(p.Options.DownloadSize, p.Options.DownloadURL)
-	dlHeaders := p.workerHeaders(p.Options.DownloadSize, true)
+	dlHeaders := p.requestHeaders(p.Options.DownloadSize, true)
 	dAvg, dMax, dSum := p.runSpeedPhase(ctx, index, remarks, "gotspeed", trafficChan,
 		func(runCtx context.Context, ch chan<- int64, startCh chan<- time.Time) (int64, error) {
 			return download.DownloadWithURLThreads(runCtx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, downloadURL, p.Options.Threads, dlHeaders)
@@ -683,7 +740,7 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 	if p.Options.UploadEnable && ctx.Err() == nil {
 		p.WriteMessage(getMsgByte(index, "startupload"))
 		uploadURL := download.GetUploadURL(p.Options.UploadSize, p.Options.UploadURL)
-		upHeaders := p.workerHeaders(p.Options.UploadSize, false)
+		upHeaders := p.requestHeaders(p.Options.UploadSize, false)
 		uAvg, uMax, _ = p.runSpeedPhase(ctx, index, remarks, "gotupload", trafficChan,
 			func(runCtx context.Context, ch chan<- int64, startCh chan<- time.Time) (int64, error) {
 				return download.UploadWithURLThreads(runCtx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, uploadURL, p.Options.Threads, upHeaders)
@@ -692,7 +749,7 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 
 	node := render.Node{
 		Id:             index,
-		Group:          p.Options.GroupName,
+		Group:          p.groupFor(index),
 		Remarks:        remarks,
 		Protocol:       protocol,
 		Ping:           fmt.Sprintf("%d", elapse),
@@ -761,16 +818,26 @@ func (p *ProfileTest) runSpeedPhase(ctx context.Context, index int, remarks, msg
 	return avg, max, sum
 }
 
-// workerHeaders 当所选端点为自建 Worker("worker")且配置了 key 时返回鉴权头;否则 nil,
-// 保证 key 不会被带到其它公共端点。下载方向额外带 Accept-Encoding: identity,避免压缩影响
-// 吞吐计量(与用户实测的 curl 命令一致)。
-func (p *ProfileTest) workerHeaders(sizeKey string, isDownload bool) map[string]string {
-	if sizeKey != "worker" || p.Options.WorkerKey == "" {
-		return nil
-	}
-	h := map[string]string{"X-Speedtest-Key": p.Options.WorkerKey}
+// requestHeaders 组装下载/上传请求头:按方向取用户自定义头(下载用 DownloadHeaders,
+// 上传用 UploadHeaders;前端已根据「统一」开关解析好两份)。自建 Worker 的 X-Speedtest-Key
+// 现由用户在自定义请求头里自行填写(不再单独字段)。下载方向对 worker 端点额外带
+// Accept-Encoding: identity 避免压缩影响吞吐计量。无任何头时返回 nil。
+func (p *ProfileTest) requestHeaders(sizeKey string, isDownload bool) map[string]string {
+	h := map[string]string{}
+	src := p.Options.UploadHeaders
 	if isDownload {
+		src = p.Options.DownloadHeaders
+	}
+	for _, kv := range src {
+		if name := strings.TrimSpace(kv.Name); name != "" {
+			h[name] = kv.Value
+		}
+	}
+	if sizeKey == "worker" && isDownload {
 		h["Accept-Encoding"] = "identity"
+	}
+	if len(h) == 0 {
+		return nil
 	}
 	return h
 }

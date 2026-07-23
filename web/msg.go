@@ -66,14 +66,17 @@ func GetRemarks(link string) (string, string, error) {
 	return cfg.Protocol, cfg.Remarks, err
 }
 
-func gotserversMsg(startID int, links []string, groupName string) []byte {
+// groups 与 links 对齐,给出每个节点的组名(可空)。
+func gotserversMsg(startID int, links []string, groups []string) []byte {
 	servers := Message{ID: startID, Info: "gotservers"}
 	for i, link := range links {
 		id := startID + i
 		msg := Message{ID: id, Info: "gotserver"}
 		cfg, err := config.Link2Config(link)
 		if err == nil {
-			msg.Group = groupName
+			if i < len(groups) {
+				msg.Group = groups[i]
+			}
 			msg.Remarks = cfg.Remarks
 			msg.Server = net.JoinHostPort(cfg.Server, strconv.Itoa(cfg.Port))
 			msg.Protocol = cfg.Protocol

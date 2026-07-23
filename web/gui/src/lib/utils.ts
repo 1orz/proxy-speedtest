@@ -85,6 +85,29 @@ export function getSpeedColor(speed: number, theme: 'rainbow' | 'original' = 'ra
   return `rgb(${lastColor[0]}, ${lastColor[1]}, ${lastColor[2]})`
 }
 
+// maskSensitive 按「保留首 2 字符 + 末 1 字符、保留 . 和 : 分隔符、其余每个连续段折叠成单个 *」脱敏。
+// 例:123.123.123.123 -> 12*.*.*.*3;hk1.example.com -> hk*.*.*m。串太短(无字符需遮蔽)时原样返回。
+export function maskSensitive(s: string): string {
+  if (!s) return s
+  const len = s.length
+  const isDelim = (c: string) => c === '.' || c === ':'
+  let out = ''
+  let masking = false
+  for (let i = 0; i < len; i++) {
+    const c = s[i]
+    const keep = i === 0 || i === 1 || i === len - 1 || isDelim(c)
+    if (keep) {
+      out += c
+      masking = false
+    } else if (!masking) {
+      out += '*'
+      masking = true
+    }
+    // 处于遮蔽段中的后续字符已由单个 * 代表,直接跳过
+  }
+  return out
+}
+
 export async function copyToClipboard(text: string): Promise<void> {
   if (navigator.clipboard) {
     await navigator.clipboard.writeText(text)
