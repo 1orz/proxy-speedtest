@@ -145,34 +145,33 @@ jobs:
       - name: List artifacts
         run: find artifacts -type f
 
-      - name: Create release archives
+      - name: Prepare release binaries
         run: |
           VERSION=${{ steps.get_version.outputs.VERSION }}
           mkdir -p release
-          
-          # Unix platforms (tar.gz)
+
+          # Unix platforms (raw binary)
           for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
             if [ -d "artifacts/proxy-speedtest-${platform}" ]; then
-              chmod +x artifacts/proxy-speedtest-${platform}/proxy-speedtest
-              tar -czvf release/proxy-speedtest-${platform}-${VERSION}.tar.gz \
-                -C artifacts/proxy-speedtest-${platform} proxy-speedtest
+              cp artifacts/proxy-speedtest-${platform}/proxy-speedtest \
+                release/proxy-speedtest-${platform}-${VERSION}
+              chmod +x release/proxy-speedtest-${platform}-${VERSION}
             fi
           done
-          
-          # Windows (zip)
+
+          # Windows (raw binary)
           if [ -d "artifacts/proxy-speedtest-windows-amd64" ]; then
-            cd artifacts/proxy-speedtest-windows-amd64
-            zip -9 ../../release/proxy-speedtest-windows-amd64-${VERSION}.zip proxy-speedtest.exe
-            cd ../..
+            cp artifacts/proxy-speedtest-windows-amd64/proxy-speedtest.exe \
+              release/proxy-speedtest-windows-amd64-${VERSION}.exe
           fi
-          
+
           ls -la release/
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
-          draft: true
+          draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
