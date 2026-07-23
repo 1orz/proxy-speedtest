@@ -86,6 +86,8 @@ const defaultOptions: TestOptions = {
   downloadUrl: '',
   uploadEnable: false,
   uploadSize: 'cloudflare',
+  uploadUrl: '',
+  workerKey: '',
 }
 
 export const useTestStore = create<TestState>()(persist((set, get) => ({

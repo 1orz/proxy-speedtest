@@ -37,6 +37,11 @@ const (
 	// DLPTestUpLink 为美国固定、返回 {"ok":true} 小响应,备选。
 	CloudflareUpLink = "https://speed.cloudflare.com/__up"
 	DLPTestUpLink    = "https://dlptest.com/api/http-post/"
+
+	// 自建 Cloudflare Worker 测速端点(需 X-Speedtest-Key 头鉴权)。URL 与 key 均可在前端改,
+	// 这里只是预置默认值。下载默认 500MiB(worker 上限 1GiB),上传走 __up(受 CF 套餐请求体上限)。
+	WorkerDownDefault = "https://cf-sp.orbitintel.com/__down?bytes=524288000"
+	WorkerUpDefault   = "https://cf-sp.orbitintel.com/__up"
 )
 
 // GetDownloadURL 把前端/命令行的端点 key 映射到具体下载 URL。key 需与前端
@@ -62,6 +67,8 @@ func GetDownloadURL(size string, customURL string) string {
 		return DataPacketUS100M
 	case "huawei-cn":
 		return HuaweiCN2G
+	case "worker":
+		return WorkerDownDefault
 	default:
 		return CloudflareLink
 	}
@@ -78,6 +85,8 @@ func GetUploadURL(size string, customURL string) string {
 		return CloudflareUpLink
 	case "dlptest":
 		return DLPTestUpLink
+	case "worker":
+		return WorkerUpDefault
 	default:
 		return CloudflareUpLink
 	}
@@ -88,6 +97,16 @@ type DownloadOption struct {
 	DownloadTimeout  time.Duration
 	HandshakeTimeout time.Duration
 	Ranges           []Range
+	Headers          map[string]string // 额外请求头(如自建 Worker 的 X-Speedtest-Key 鉴权)
+}
+
+// applyHeaders 把非空的自定义请求头写入 req(用于鉴权等)。
+func applyHeaders(req *http.Request, headers map[string]string) {
+	for k, v := range headers {
+		if k != "" && v != "" {
+			req.Header.Set(k, v)
+		}
+	}
 }
 
 type Discard struct {
@@ -163,7 +182,7 @@ func DownloadWithURL(link string, timeout time.Duration, handshakeTimeout time.D
 // ctx 为调用方上下文:客户端断开/用户点终止时取消它,本次下载(含全部 worker)会立即停止,
 // 避免协程与代理连接泄漏。注意:threads 是"单个节点测速内部的并行连接数",与"并发数"(同时
 // 测多少个节点)是两个不同维度。
-func DownloadWithURLThreads(ctx context.Context, link string, timeout time.Duration, handshakeTimeout time.Duration, resultChan chan<- int64, startChan chan<- time.Time, downloadURL string, threads int) (int64, error) {
+func DownloadWithURLThreads(ctx context.Context, link string, timeout time.Duration, handshakeTimeout time.Duration, resultChan chan<- int64, startChan chan<- time.Time, downloadURL string, threads int, headers map[string]string) (int64, error) {
 	dialer, err := createDialer(link)
 	if err != nil {
 		return 0, err
@@ -182,6 +201,7 @@ func DownloadWithURLThreads(ctx context.Context, link string, timeout time.Durat
 			DownloadTimeout:  timeout,
 			HandshakeTimeout: handshakeTimeout,
 			URL:              downloadURL,
+			Headers:          headers,
 		}
 		return downloadInternal(dlCtx, option, resultChan, startChan, dialer.DialContext)
 	}
@@ -202,6 +222,7 @@ func DownloadWithURLThreads(ctx context.Context, link string, timeout time.Durat
 				if err != nil {
 					return
 				}
+				applyHeaders(req, headers)
 				resp, err := client.Do(req)
 				if err != nil {
 					// 连接/请求失败:短暂退避后重试,直到超时或被取消
@@ -325,7 +346,7 @@ func (b *uploadBody) Read(p []byte) (int, error) {
 // UploadWithURLThreads 对称于 DownloadWithURLThreads:threads 个并行 POST 把零字节流上传到
 // uploadURL(接收即丢弃型端点,如 Cloudflare __up),atomic 聚合每秒吞吐,返回峰值每秒速度。
 // ctx 取消会终止全部上传 worker。
-func UploadWithURLThreads(ctx context.Context, link string, timeout time.Duration, handshakeTimeout time.Duration, resultChan chan<- int64, startChan chan<- time.Time, uploadURL string, threads int) (int64, error) {
+func UploadWithURLThreads(ctx context.Context, link string, timeout time.Duration, handshakeTimeout time.Duration, resultChan chan<- int64, startChan chan<- time.Time, uploadURL string, threads int, headers map[string]string) (int64, error) {
 	dialer, err := createDialer(link)
 	if err != nil {
 		return 0, err
@@ -359,6 +380,7 @@ func UploadWithURLThreads(ctx context.Context, link string, timeout time.Duratio
 				req.ContentLength = uploadChunkBytes // 固定 Content-Length,避免 chunked 被部分端点拒绝
 				req.Header.Set("Content-Type", "application/octet-stream")
 				req.Header.Set("User-Agent", "Mozilla/5.0")
+				applyHeaders(req, headers)
 				resp, err := client.Do(req)
 				if err != nil {
 					// 连接/发送失败(含 ctx 取消致 body 短于 Content-Length):本次不计入,退避重试
@@ -446,6 +468,7 @@ func downloadInternal(ctx context.Context, option DownloadOption, resultChan cha
 	if err != nil {
 		return max, err
 	}
+	applyHeaders(req, option.Headers)
 	response, err := httpClient.Do(req)
 	if err != nil {
 		return max, err

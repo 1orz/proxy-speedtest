@@ -292,6 +292,7 @@ type ProfileTestOptions struct {
 	UploadURL       string        `json:"uploadUrl"`                // custom upload URL (POST sink); optional
 	UploadSize      string        `json:"uploadSize"`               // upload endpoint preset key (see download.GetUploadURL)
 	Appearance      string        `json:"appearance"`               // image appearance: "light"(default) | "dark"
+	WorkerKey       string        `json:"workerKey"`                // 自建 Cloudflare Worker 端点的 X-Speedtest-Key 鉴权值
 }
 
 type CMDOptions struct {
@@ -670,9 +671,10 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 	}
 	p.WriteMessage(getMsgByte(index, "startspeed"))
 	downloadURL := download.GetDownloadURL(p.Options.DownloadSize, p.Options.DownloadURL)
+	dlHeaders := p.workerHeaders(p.Options.DownloadSize, true)
 	dAvg, dMax, dSum := p.runSpeedPhase(ctx, index, remarks, "gotspeed", trafficChan,
 		func(runCtx context.Context, ch chan<- int64, startCh chan<- time.Time) (int64, error) {
-			return download.DownloadWithURLThreads(runCtx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, downloadURL, p.Options.Threads)
+			return download.DownloadWithURLThreads(runCtx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, downloadURL, p.Options.Threads, dlHeaders)
 		})
 
 	// 上传阶段(可选,串行于下载之后;PingOnly 已在 pingLink 提前返回,不会到这里)。
@@ -681,9 +683,10 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 	if p.Options.UploadEnable && ctx.Err() == nil {
 		p.WriteMessage(getMsgByte(index, "startupload"))
 		uploadURL := download.GetUploadURL(p.Options.UploadSize, p.Options.UploadURL)
+		upHeaders := p.workerHeaders(p.Options.UploadSize, false)
 		uAvg, uMax, _ = p.runSpeedPhase(ctx, index, remarks, "gotupload", trafficChan,
 			func(runCtx context.Context, ch chan<- int64, startCh chan<- time.Time) (int64, error) {
-				return download.UploadWithURLThreads(runCtx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, uploadURL, p.Options.Threads)
+				return download.UploadWithURLThreads(runCtx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, uploadURL, p.Options.Threads, upHeaders)
 			})
 	}
 
@@ -756,6 +759,20 @@ func (p *ProfileTest) runSpeedPhase(ctx context.Context, index int, remarks, msg
 		p.WriteMessage(getMsgByte(index, msgType, -1, -1, 0))
 	}
 	return avg, max, sum
+}
+
+// workerHeaders 当所选端点为自建 Worker("worker")且配置了 key 时返回鉴权头;否则 nil,
+// 保证 key 不会被带到其它公共端点。下载方向额外带 Accept-Encoding: identity,避免压缩影响
+// 吞吐计量(与用户实测的 curl 命令一致)。
+func (p *ProfileTest) workerHeaders(sizeKey string, isDownload bool) map[string]string {
+	if sizeKey != "worker" || p.Options.WorkerKey == "" {
+		return nil
+	}
+	h := map[string]string{"X-Speedtest-Key": p.Options.WorkerKey}
+	if isDownload {
+		h["Accept-Encoding"] = "identity"
+	}
+	return h
 }
 
 func (p *ProfileTest) pingLink(index int, link string) (int64, error) {

@@ -28,15 +28,22 @@ const DOWNLOAD_ENDPOINTS = [
   { key: 'ovh-eu', label: { en: 'OVH Europe (1GB)', cn: 'OVH 欧洲（1GB）' }, url: 'https://proof.ovh.net/files/1Gb.dat' },
   { key: 'datapacket-us', label: { en: 'DataPacket USA (100MB)', cn: 'DataPacket 美国（100MB）' }, url: 'http://lax.download.datapacket.com/100mb.bin' },
   { key: 'huawei-cn', label: { en: 'Huawei Cloud Mirror · China (2.3GB)', cn: '华为云镜像 · 国内（2.3GB）' }, url: 'https://mirrors.huaweicloud.com/ubuntu-releases/bionic/ubuntu-18.04.6-desktop-amd64.iso' },
+  { key: 'worker', label: { en: 'Cloudflare Worker (self-hosted · needs key)', cn: 'Cloudflare Worker（自建 · 需 Key）' }, url: 'https://cf-sp.orbitintel.com/__down?bytes=524288000' },
 ] as const
 
 const DEFAULT_ENDPOINT = 'cloudflare'
+
+// 自建 Cloudflare Worker 端点预填(URL 与 Key 均可改)。下载 500MiB / 上传走 __up。
+const WORKER_DOWN_URL = 'https://cf-sp.orbitintel.com/__down?bytes=524288000'
+const WORKER_UP_URL = 'https://cf-sp.orbitintel.com/__up'
+const WORKER_KEY_DEFAULT = 'd53706d047e7e1ae1bd33b4124ea0a30adf5adcc2405c360'
 
 // 上传测速端点(POST 接收即丢弃)。key 必须与后端 download.GetUploadURL 的 case 一致。
 // 可用的公共 sink 稀缺:CF __up 为 Anycast 就近、首选;DLPTest 为美国固定备选。
 const UPLOAD_ENDPOINTS = [
   { key: 'cloudflare', label: { en: 'Cloudflare __up (Global Anycast · nearest, preferred)', cn: 'Cloudflare __up（全球 Anycast · 就近,首选）' }, url: 'https://speed.cloudflare.com/__up' },
   { key: 'dlptest', label: { en: 'DLPTest (USA, fallback)', cn: 'DLPTest（美国,备选）' }, url: 'https://dlptest.com/api/http-post/' },
+  { key: 'worker', label: { en: 'Cloudflare Worker (self-hosted · needs key)', cn: 'Cloudflare Worker（自建 · 需 Key）' }, url: WORKER_UP_URL },
 ] as const
 
 const CONCURRENCY_PRESETS = [1, 3, 5] as const
@@ -144,6 +151,8 @@ export function TestForm() {
       downloadUrl: options.downloadUrl,
       uploadEnable,
       uploadSize: options.uploadSize,
+      uploadUrl: options.uploadUrl,
+      workerKey: options.workerKey,
     })
 
     // 按页面协议选择 ws/wss,HTTPS 部署下才不会被混合内容策略拦截
@@ -380,6 +389,12 @@ export function TestForm() {
               onValueChange={(v) => {
                 if (v === 'custom') {
                   setOptions({ downloadSize: 'custom' })
+                } else if (v === 'worker') {
+                  setOptions({
+                    downloadSize: 'worker',
+                    downloadUrl: WORKER_DOWN_URL,
+                    workerKey: options.workerKey || WORKER_KEY_DEFAULT,
+                  })
                 } else {
                   setOptions({ downloadSize: v, downloadUrl: '' })
                 }
@@ -398,7 +413,7 @@ export function TestForm() {
                 <SelectItem value="custom">{t('form.customUrl')}</SelectItem>
               </SelectContent>
             </Select>
-            {options.downloadSize === 'custom' ? (
+            {options.downloadSize === 'custom' || options.downloadSize === 'worker' ? (
               <Input
                 value={options.downloadUrl}
                 onChange={(e) => setOptions({ downloadUrl: e.target.value })}
@@ -414,6 +429,9 @@ export function TestForm() {
                 aria-label={t('form.currentUrl.aria')}
                 className="font-mono text-xs text-muted-foreground cursor-not-allowed focus-visible:ring-0"
               />
+            )}
+            {options.downloadSize === 'worker' && (
+              <WorkerKeyField t={t} value={options.workerKey} loading={loading} onChange={(v) => setOptions({ workerKey: v })} />
             )}
             <p className="text-xs text-muted-foreground">
               {t('form.downloadEndpoint.hint')}
@@ -442,7 +460,13 @@ export function TestForm() {
               <div className="space-y-2 pl-7">
                 <Select
                   value={options.uploadSize}
-                  onValueChange={(v) => setOptions({ uploadSize: v })}
+                  onValueChange={(v) => {
+                    if (v === 'worker') {
+                      setOptions({ uploadSize: 'worker', uploadUrl: WORKER_UP_URL, workerKey: options.workerKey || WORKER_KEY_DEFAULT })
+                    } else {
+                      setOptions({ uploadSize: v, uploadUrl: '' })
+                    }
+                  }}
                   disabled={loading}
                 >
                   <SelectTrigger>
@@ -456,13 +480,26 @@ export function TestForm() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Input
-                  value={UPLOAD_ENDPOINTS.find((e) => e.key === options.uploadSize)?.url ?? ''}
-                  readOnly
-                  tabIndex={-1}
-                  aria-label={t('form.currentUploadUrl.aria')}
-                  className="font-mono text-xs text-muted-foreground cursor-not-allowed focus-visible:ring-0"
-                />
+                {options.uploadSize === 'worker' ? (
+                  <>
+                    <Input
+                      value={options.uploadUrl}
+                      onChange={(e) => setOptions({ uploadUrl: e.target.value })}
+                      placeholder={WORKER_UP_URL}
+                      disabled={loading}
+                      className="font-mono text-xs"
+                    />
+                    <WorkerKeyField t={t} value={options.workerKey} loading={loading} onChange={(v) => setOptions({ workerKey: v })} />
+                  </>
+                ) : (
+                  <Input
+                    value={UPLOAD_ENDPOINTS.find((e) => e.key === options.uploadSize)?.url ?? ''}
+                    readOnly
+                    tabIndex={-1}
+                    aria-label={t('form.currentUploadUrl.aria')}
+                    className="font-mono text-xs text-muted-foreground cursor-not-allowed focus-visible:ring-0"
+                  />
+                )}
                 <p className="text-xs text-muted-foreground">
                   {t('form.uploadEndpoint.hint')}
                 </p>
@@ -527,6 +564,34 @@ function NumberField({
         setText(String(n))
       }}
     />
+  )
+}
+
+// WorkerKeyField 是自建 Worker 端点的 X-Speedtest-Key 输入(下载/上传共用同一个 key)。
+function WorkerKeyField({
+  t,
+  value,
+  loading,
+  onChange,
+}: {
+  t: ReturnType<typeof useI18n>
+  value: string
+  loading: boolean
+  onChange: (v: string) => void
+}) {
+  return (
+    <div className="space-y-1">
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={t('form.worker.keyPh')}
+        disabled={loading}
+        autoComplete="off"
+        spellCheck={false}
+        className="font-mono text-xs"
+      />
+      <p className="text-xs text-muted-foreground">{t('form.worker.hint')}</p>
+    </div>
   )
 }
 

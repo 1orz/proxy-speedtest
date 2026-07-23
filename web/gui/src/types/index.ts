@@ -32,6 +32,8 @@ export interface TestOptions {
   downloadUrl: string
   uploadEnable: boolean
   uploadSize: string
+  uploadUrl: string
+  workerKey: string
 }
 
 export interface WebSocketMessage {
