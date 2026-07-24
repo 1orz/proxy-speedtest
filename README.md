@@ -29,8 +29,9 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 # CLI mode: subscription (JSON to stdout by default)
 ./proxy-speedtest --test https://example.com/subscription
 
-# CLI mode: a single share link, directly
+# CLI mode: a single share link, directly (flags may go before or after the link)
 ./proxy-speedtest "vmess://..."
+./proxy-speedtest -o csv "vmess://..."
 
 # CSV to a file (or pipe to stdout)
 ./proxy-speedtest --test https://sub --output csv --output-file result.csv

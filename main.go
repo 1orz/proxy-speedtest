@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"strings"
 
 	grpcServer "github.com/1orz/proxy-speedtest/api/rpc/liteserver"
 	C "github.com/1orz/proxy-speedtest/constant"
@@ -51,20 +50,23 @@ func fatal(msg string, err error) {
 
 func main() {
 	flag.Parse()
+	// 位置参数里的分享链接(vmess:// 等)→ 单链接直测。用 flag.Args() 而不是扫描 os.Args:
+	//   1) 避免把 --download-url 等 flag 的取值(如 http://...)误判成链接;
+	//   2) Go 的 flag 在首个位置参数处停止解析,这里把链接之后出现的 token 再解析一遍,
+	//      使 `proxy-speedtest "vmess://..." -o csv` 这种「flag 在链接后」也能生效。
+	link := ""
+	if flag.NArg() > 0 {
+		if _, err := utils.CheckLink(flag.Arg(0)); err == nil {
+			link = flag.Arg(0)
+			if flag.NArg() > 1 {
+				_ = flag.CommandLine.Parse(flag.Args()[1:])
+			}
+		}
+	}
 	log.Setup(*logLevel)
 	if *version {
 		fmt.Printf("LiteSpeedTest  %s %s %s with %s %s\n", C.Version, runtime.GOOS, runtime.GOARCH, runtime.Version(), C.BuildTime)
 		return
-	}
-	link := ""
-	for _, arg := range os.Args {
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-		if _, err := utils.CheckLink(arg); err == nil {
-			link = arg
-			break
-		}
 	}
 
 	// Test from command line
