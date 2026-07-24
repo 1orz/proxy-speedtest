@@ -26,7 +26,7 @@ var (
 	version      = flag.Bool("v", false, "show current version")
 	timeout      = flag.Int("timeout", 16, "timeout for each node test in seconds")
 	concurrency  = flag.Int("concurrency", 2, "number of concurrent tests")
-	output       = flag.String("output", "json", "output format: json, text, pic, none")
+	output       = flag.String("output", "json", "output formats (comma-separated): json, csv, text, table, pic, none")
 	outputFile   = flag.String("output-file", "", "output file path for JSON result")
 	outputPic    = flag.String("output-pic", "", "output pic path (can be used with any output format)")
 	downloadURL  = flag.String("download-url", "", "custom download URL for speed test")
@@ -35,6 +35,12 @@ var (
 	mode         = flag.String("mode", "all", "test mode: pingonly, speedonly, all")
 	logLevel     = flag.String("log-level", "info", "log level: debug, info, warning, error, silent")
 )
+
+// init 注册短参数别名,绑定到与长参数相同的变量(后解析者生效)。
+func init() {
+	flag.StringVar(output, "o", "json", "alias for -output")
+	flag.StringVar(outputFile, "f", "", "alias for -output-file")
+}
 
 // fatal 无条件把致命错误打到 stderr 再退出;不经日志级别门控,
 // 保证即便 -log-level silent 也能看到进程为何失败。
@@ -73,6 +79,7 @@ func main() {
 			DownloadSize:  *downloadSize,
 			Threads:       *threads,
 			Mode:          *mode,
+			Silent:        *logLevel == "silent",
 		}
 		if err := webServer.TestFromCMD(*test, conf, cmdOpts); err != nil {
 			fatal("command-line test failed", err)
@@ -100,6 +107,7 @@ func main() {
 			DownloadSize:  *downloadSize,
 			Threads:       *threads,
 			Mode:          *mode,
+			Silent:        *logLevel == "silent",
 		}
 		if err := webServer.TestFromCMD(link, conf, cmdOpts); err != nil {
 			fatal("single-link test failed", err)
