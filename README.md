@@ -14,34 +14,77 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 
 ## Usage
 
-### Run as a speed test tool
+### Web mode vs CLI mode
+
+- **No subscription/link argument → web mode.** Starts the web UI (default `http://127.0.0.1:10888/`).
+- **A subscription link, a share link (`vmess://` / `vless://` / `trojan://` / `ss://` …), or a local
+  file → CLI mode.** Runs the speed test directly and prints/saves the result. Live progress goes to
+  **stderr**; the result data goes to **stdout** (so it pipes cleanly).
 
 ```bash
-# run this command then open http://127.0.0.1:10888/ in your browser to start speed test
+# web mode: open http://127.0.0.1:10888/ in your browser
 ./proxy-speedtest
+./proxy-speedtest -p 10889            # another port
 
-# start with another port
-./proxy-speedtest -p 10889
-
-# test in command line only mode (output JSON by default)
+# CLI mode: subscription (JSON to stdout by default)
 ./proxy-speedtest --test https://example.com/subscription
 
-# test with custom timeout (seconds) and concurrency
-./proxy-speedtest --test https://example.com/subscription --timeout 20 --concurrency 4
+# CLI mode: a single share link, directly (flags may go before or after the link)
+./proxy-speedtest "vmess://..."
+./proxy-speedtest -o csv "vmess://..."
 
-# test with custom download file size (10mb, 100mb, cloudflare10, cloudflare100)
-./proxy-speedtest --test https://example.com/subscription --download-size 100mb
+# CSV to a file (or pipe to stdout)
+./proxy-speedtest --test https://sub --output csv --output-file result.csv
+./proxy-speedtest --test https://sub -o csv > result.csv
 
-# test with custom download URL
-./proxy-speedtest --test https://example.com/subscription --download-url "https://speed.cloudflare.com/__down?bytes=50000000"
+# human-readable table in the terminal
+./proxy-speedtest --test https://sub --output table
 
-# output formats: json (default), text, pic, none
-./proxy-speedtest --test https://example.com/subscription --output json
-./proxy-speedtest --test https://example.com/subscription --output text
+# produce JSON + a result image in one run
+./proxy-speedtest --test https://sub --output json,pic --output-pic result.png
 
-# test with config file
-./proxy-speedtest --config config.json --test https://example.com/subscription
+# custom timeout (seconds) and concurrency
+./proxy-speedtest --test https://sub --timeout 20 --concurrency 4
+
+# multi-threaded download per node
+./proxy-speedtest --test https://sub --threads 4
+
+# download endpoint preset (cloudflare, hetzner-de, hetzner-us, linode-jp, vultr-sg, ovh-eu, datapacket-us, huawei-cn, worker)
+./proxy-speedtest --test https://sub --download-size cloudflare
+
+# custom download URL
+./proxy-speedtest --test https://sub --download-url "https://speed.cloudflare.com/__down?bytes=50000000"
+
+# use a config file
+./proxy-speedtest --config config.json --test https://sub
 ```
+
+### Output formats
+
+`-output` (alias `-o`) takes a **comma-separated list** of formats: `json`, `csv`, `text`, `table`,
+`pic`, `none`.
+
+| Format | Content | Default destination |
+|--------|---------|---------------------|
+| `json` | full result (nodes + options + traffic + duration + counts) | stdout |
+| `csv`  | one row per node (machine-friendly; speeds in bytes/sec) | stdout |
+| `text` | share links of working nodes only (importable as a subscription) | stdout |
+| `table`| human-readable aligned table + summary footer | stdout |
+| `pic`  | PNG result image | file (never stdout) |
+| `none` | run the test, produce no output | — |
+
+**Where output goes:**
+
+- Data formats (`json`/`csv`/`text`/`table`):
+  - no `-output-file` and a single format → **stdout**;
+  - no `-output-file` and multiple formats → each written to `speedtest-<timestamp>.<ext>`;
+  - `-output-file PATH` → the first data format uses `PATH`, extras auto-named.
+- `pic` always writes a file: `-output-pic PATH`, else `-output-file` when it is the only output,
+  else `speedtest-<timestamp>.png`.
+
+**CSV columns:**
+`id, group, remarks, protocol, ping_ms, avg_download_bytes_per_sec, max_download_bytes_per_sec,
+avg_upload_bytes_per_sec, max_upload_bytes_per_sec, traffic_bytes, success, link`
 
 ### Command line options
 
@@ -50,11 +93,16 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 | `-test` | | Subscription URL or file path to test |
 | `-timeout` | 16 | Timeout for each node test (seconds) |
 | `-concurrency` | 2 | Number of concurrent tests |
-| `-output` | json | Output format: json, text, pic, none |
-| `-download-size` | | Download size: 10mb, 100mb, cloudflare10, cloudflare100 |
+| `-output`, `-o` | json | Output formats (comma-separated): json, csv, text, table, pic, none |
+| `-output-file`, `-f` | | File path for the (first) data output |
+| `-output-pic` | | File path for the PNG result image |
+| `-mode` | all | Test mode: pingonly, speedonly, all |
+| `-threads` | 1 | Parallel download connections per node |
+| `-download-size` | | Download endpoint preset: cloudflare, hetzner-de, hetzner-us, linode-jp, vultr-sg, ovh-eu, datapacket-us, huawei-cn, worker |
 | `-download-url` | | Custom download URL for speed test |
 | `-config` | | Config file path (JSON format) |
-| `-p` | 8090 | Port for web server or proxy |
+| `-log-level` | info | Log level: debug, info, warning, error, silent (silent also hides progress) |
+| `-p` | 10888 | Web server port (CLI mode ignores it) |
 | `-grpc` | false | Start as gRPC server |
 | `-v` | | Show version |
 
@@ -86,19 +134,6 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 
 # grpc go client example in ./api/rpc/liteclient/client.go
 # grpc python client example in ./api/rpc/liteclientpy/client.py
-```
-
-### Run as a HTTP/SOCKS5 proxy
-
-```bash
-# use default port 8090
-./proxy-speedtest vmess://...
-./proxy-speedtest vless://...
-./proxy-speedtest trojan://...
-./proxy-speedtest ss://...
-
-# use another port
-./proxy-speedtest -p 8091 vmess://...
 ```
 
 ## Build

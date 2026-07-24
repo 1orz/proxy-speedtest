@@ -119,8 +119,13 @@ func buildJSONConfig(config *ProxyConfig) ([]byte, error) {
 		return nil, err
 	}
 
-	// Build complete config
+	// Build complete config. loglevel=none 关闭 xray-core 自身日志(否则会往 stdout 打
+	// "Xray started"/deprecated 等 Warning,污染 CLI 的管道输出)。测速只把 xray 当拨号器用,
+	// 其日志无价值。
 	xrayConf := map[string]interface{}{
+		"log": map[string]interface{}{
+			"loglevel": "none",
+		},
 		"outbounds": []interface{}{outbound},
 	}
 

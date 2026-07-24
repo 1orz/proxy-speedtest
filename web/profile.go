@@ -319,6 +319,7 @@ type CMDOptions struct {
 	DownloadSize  string
 	Threads       int    // parallel download connections per node
 	Mode          string // pingonly, speedonly, all
+	Silent        bool   // -log-level silent: 不打印 stderr 进度
 }
 
 type JSONOutput struct {
@@ -525,11 +526,13 @@ func (p *ProfileTest) TestAll(ctx context.Context, trafficChan chan<- int64) (ch
 	return nodeChan, nil
 }
 
-func (p *ProfileTest) testAll(ctx context.Context) (render.Nodes, error) {
+// run 只跑测速并收集汇总(started/gotservers/eof 消息、公网 IP 抓取、duration/traffic/成功计数),
+// 不排序、不写盘/推图。WS(经 testAll)与 CLI(经 TestFromCMD)共用。返回未排序(按 Id)的 nodes。
+func (p *ProfileTest) run(ctx context.Context) (render.Nodes, TestSummary, error) {
 	linksCount := len(p.Links)
 	if linksCount < 1 {
 		p.WriteString(SPEEDTEST_ERROR_NONODES)
-		return nil, fmt.Errorf("no profile found")
+		return nil, TestSummary{}, fmt.Errorf("no profile found")
 	}
 	start := time.Now()
 	p.WriteMessage(getMsgByte(-1, "started"))
@@ -537,9 +540,6 @@ func (p *ProfileTest) testAll(ctx context.Context) (render.Nodes, error) {
 	if p.shouldFetchIP() {
 		p.startIPFetch(ctx)
 	}
-	// for i := range p.Links {
-	// 	p.WriteMessage(gotserverMsg(i, p.Links[i], p.Options.GroupName))
-	// }
 	step := 9
 	if linksCount > 200 {
 		step = linksCount / 20
@@ -581,13 +581,12 @@ func (p *ProfileTest) testAll(ctx context.Context) (render.Nodes, error) {
 				<-c
 			}(id, link, guard, nodeChan)
 		case <-ctx.Done():
-			return nil, nil
+			return nil, TestSummary{}, ctx.Err()
 		}
 	}
 	p.wg.Wait()
 	p.WriteMessage(getMsgByte(-1, "eof"))
 	duration := FormatDuration(time.Since(start))
-	// draw png
 	successCount := 0
 	var traffic int64 = 0
 	for i := 0; i < linksCount; i++ {
@@ -601,9 +600,33 @@ func (p *ProfileTest) testAll(ctx context.Context) (render.Nodes, error) {
 	}
 	close(nodeChan)
 
+	summary := TestSummary{
+		Nodes:        nodes,
+		Traffic:      traffic,
+		Duration:     duration,
+		SuccessCount: successCount,
+		LinksCount:   linksCount,
+	}
+	return nodes, summary, nil
+}
+
+// testAll 保持旧签名与副作用:run + 按 OutputMode 排序并写盘/推图(WS 与 HTTP 客户端用)。
+func (p *ProfileTest) testAll(ctx context.Context) (render.Nodes, error) {
+	nodes, summary, err := p.run(ctx)
+	if err != nil {
+		// 保持旧行为:被取消时返回 (nil, nil),不视为错误。
+		if ctx.Err() != nil {
+			return nil, nil
+		}
+		return nil, err
+	}
+
 	if p.Options.OutputMode == PIC_NONE {
 		return nodes, nil
 	}
+
+	traffic, duration := summary.Traffic, summary.Duration
+	successCount, linksCount := summary.SuccessCount, summary.LinksCount
 
 	// sort nodes
 	nodes.Sort(p.Options.SortMethod)

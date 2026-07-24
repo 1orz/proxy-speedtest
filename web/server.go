@@ -288,33 +288,30 @@ func readConfig(configPath string) (*ProfileTestOptions, error) {
 	return options, nil
 }
 
+// TestFromCMD 是 CLI 入口:组装选项 → 解析 OutputPlan → run 测速 → emitCMD 多格式输出。
+// 进度打到 stderr(非 silent),stdout 只留纯净数据结果。
 func TestFromCMD(subscription string, configPath *string, cmdOpts *CMDOptions) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	options := ProfileTestOptions{
-		GroupName:       "Default",
-		SpeedTestMode:   "all",
-		SortMethod:      "rspeed",
-		Concurrency:     2,
-		TestMode:        2,
-		Subscription:    subscription,
-		Language:        "en",
-		FontSize:        24,
-		Theme:           "rainbow",
-		Appearance:      "light",
-		Timeout:         15 * time.Second,
-		GeneratePicMode: PIC_PATH,
-		OutputMode:      PIC_PATH,
+		GroupName:     "Default",
+		SpeedTestMode: "all",
+		SortMethod:    "rspeed",
+		Concurrency:   2,
+		TestMode:      2,
+		Subscription:  subscription,
+		Language:      "en",
+		FontSize:      24,
+		Theme:         "rainbow",
+		Appearance:    "light",
+		Timeout:       15 * time.Second,
 	}
 	if configPath != nil && *configPath != "" {
 		if opt, err := readConfig(*configPath); err == nil {
 			options = *opt
-			if options.GeneratePicMode != 0 {
-				options.OutputMode = options.GeneratePicMode
-			}
 		}
 	}
-	// apply command line options (override config file)
+	outputSpec := "json"
 	if cmdOpts != nil {
 		if cmdOpts.Timeout > 0 {
 			options.Timeout = time.Duration(cmdOpts.Timeout) * time.Second
@@ -343,26 +340,16 @@ func TestFromCMD(subscription string, configPath *string, cmdOpts *CMDOptions) e
 		default:
 			options.SpeedTestMode = "all"
 		}
-		switch cmdOpts.Output {
-		case "json":
-			options.OutputMode = JSON_OUTPUT
-		case "text":
-			options.OutputMode = TEXT_OUTPUT
-		case "pic":
-			options.OutputMode = PIC_PATH
-		case "none":
-			options.OutputMode = PIC_NONE
-		}
-		// output file path
-		if cmdOpts.OutputFile != "" {
-			options.OutputFilePath = cmdOpts.OutputFile
-		}
-		// output pic path (can be used with any output mode)
-		if cmdOpts.OutputPicPath != "" {
-			options.OutputPicPath = cmdOpts.OutputPicPath
+		if cmdOpts.Output != "" {
+			outputSpec = cmdOpts.Output
 		}
 	}
-	// check url
+	// CLI 输出由 OutputPlan 决定;OutputMode 仅供 run() 里 shouldFetchIP 判定,
+	// 统一置为 PIC_NONE,再按 pic 目标设置 OutputPicPath 触发 IP 抓取。
+	options.OutputMode = PIC_NONE
+	options.OutputPicPath = ""
+
+	// check url / file
 	if len(subscription) > 0 && subscription != options.Subscription {
 		if _, err := url.Parse(subscription); err == nil {
 			options.Subscription = subscription
@@ -370,52 +357,46 @@ func TestFromCMD(subscription string, configPath *string, cmdOpts *CMDOptions) e
 			options.Subscription = subscription
 		}
 	}
-	if jsonOpt, err := json.Marshal(options); err == nil {
-		slog.Debug("cmd options", "json", string(jsonOpt))
+
+	var outputFile, outputPic string
+	if cmdOpts != nil {
+		outputFile = cmdOpts.OutputFile
+		outputPic = cmdOpts.OutputPicPath
 	}
-	nodes, err := TestContext(ctx, options, &OutputMessageWriter{})
+	targets, err := ParseOutputPlan(outputSpec, outputFile, outputPic, time.Now())
 	if err != nil {
 		return err
 	}
-	// output JSON to stdout when output mode is json
-	if options.OutputMode == JSON_OUTPUT {
-		outputJSON(nodes, options)
+	for _, t := range targets {
+		if t.Format == "pic" {
+			options.OutputPicPath = t.Path
+			break
+		}
 	}
-	return nil
-}
 
-func outputJSON(nodes render.Nodes, options ProfileTestOptions) {
-	var traffic int64
-	successCount := 0
-	for _, node := range nodes {
-		traffic += node.Traffic
-		if node.Success {
-			successCount++
-		}
+	if jsonOpt, err := json.Marshal(options); err == nil {
+		slog.Debug("cmd options", "json", string(jsonOpt))
 	}
-	jsonOutput := JSONOutput{
-		Nodes:        nodes,
-		Options:      options,
-		Traffic:      traffic,
-		Duration:     "",
-		SuccessCount: successCount,
-		LinksCount:   len(nodes),
-	}
-	data, err := json.MarshalIndent(&jsonOutput, "", "  ")
+
+	links, err := ParseLinks(options.Subscription)
 	if err != nil {
-		slog.Error("json marshal failed", "err", err)
-		return
+		return err
 	}
-	// output to file if OutputFilePath is set
-	if options.OutputFilePath != "" {
-		if err := os.WriteFile(options.OutputFilePath, data, 0644); err != nil {
-			slog.Error("failed to write JSON file", "path", options.OutputFilePath, "err", err)
-		} else {
-			slog.Info("JSON result saved", "path", options.OutputFilePath)
-		}
-	} else {
-		fmt.Println(string(data))
+	var writer MessageWriter = &EmptyMessageWriter{}
+	if cmdOpts == nil || !cmdOpts.Silent {
+		writer = NewCMDProgressWriter(os.Stderr)
 	}
+	p := &ProfileTest{
+		Writer:      writer,
+		Options:     &options,
+		MessageType: 1,
+		Links:       links,
+	}
+	_, summary, err := p.run(ctx)
+	if err != nil {
+		return err
+	}
+	return p.emitCMD(summary, targets)
 }
 
 // use as golang api
