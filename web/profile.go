@@ -319,6 +319,7 @@ type CMDOptions struct {
 	DownloadSize  string
 	Threads       int    // parallel download connections per node
 	Mode          string // pingonly, speedonly, all
+	Silent        bool   // -log-level silent: 不打印 stderr 进度
 }
 
 type JSONOutput struct {
