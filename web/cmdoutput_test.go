@@ -124,3 +124,24 @@ func TestRenderJSONBytes(t *testing.T) {
 		t.Fatalf("json missing summary counts: %s", s)
 	}
 }
+
+func TestRenderTableString(t *testing.T) {
+	s := renderTableString(sampleSummary())
+	for _, sub := range []string{"REMARKS", "PROTO", "PING", "DOWN", "UP", "Total 2", "OK 1"} {
+		if !strings.Contains(s, sub) {
+			t.Fatalf("table missing %q:\n%s", sub, s)
+		}
+	}
+	if !strings.Contains(s, "42ms") {
+		t.Fatalf("table missing working ping:\n%s", s)
+	}
+}
+
+func TestTruncateRunes(t *testing.T) {
+	if got := truncateRunes("abcdef", 4); got != "abc…" {
+		t.Fatalf("truncate=%q", got)
+	}
+	if got := truncateRunes("ab", 4); got != "ab" {
+		t.Fatalf("truncate=%q", got)
+	}
+}

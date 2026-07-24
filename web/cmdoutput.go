@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
+	"github.com/1orz/proxy-speedtest/download"
 	"github.com/1orz/proxy-speedtest/web/render"
 )
 
@@ -171,4 +173,44 @@ func renderJSONBytes(summary TestSummary, opts *ProfileTestOptions) ([]byte, err
 		LinksCount:   summary.LinksCount,
 	}
 	return json.MarshalIndent(&out, "", "  ")
+}
+
+// truncateRunes 按 rune 截断,超出则以 … 结尾。
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n < 1 {
+		return ""
+	}
+	return string(r[:n-1]) + "…"
+}
+
+// renderTableString 生成终端可读对齐表 + 底部汇总行。失败节点 Ping/Down/Up 显示 -。
+func renderTableString(summary TestSummary) string {
+	var b strings.Builder
+	tw := tabwriter.NewWriter(&b, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "#\tREMARKS\tPROTO\tPING\tDOWN\tUP")
+	for i, n := range summary.Nodes {
+		ping, down, up := "-", "-", "-"
+		if n.Success {
+			if n.Ping != "0" && n.Ping != "" {
+				ping = n.Ping + "ms"
+			}
+			if n.AvgSpeed > 0 {
+				down = download.ByteCountIECTrim(n.AvgSpeed)
+			}
+			if n.UploadSpeed > 0 {
+				up = download.ByteCountIECTrim(n.UploadSpeed)
+			}
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
+			i+1, truncateRunes(n.Remarks, 28), n.Protocol, ping, down, up)
+	}
+	tw.Flush()
+	b.WriteString(fmt.Sprintf("— Total %d · OK %d · Traffic %s · %s\n",
+		summary.LinksCount, summary.SuccessCount,
+		download.ByteCountIECTrim(summary.Traffic), summary.Duration))
+	return b.String()
 }
