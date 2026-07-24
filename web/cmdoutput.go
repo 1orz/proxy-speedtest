@@ -1,9 +1,15 @@
 package web
 
 import (
+	"bytes"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/1orz/proxy-speedtest/web/render"
 )
 
 // OutputTarget 是一个已解析的输出目标。Path == "" 表示写 stdout(仅数据类)。
@@ -102,4 +108,67 @@ func ParseOutputPlan(spec, outputFile, outputPic string, now time.Time) ([]Outpu
 		}
 	}
 	return targets, nil
+}
+
+// TestSummary 承载一次测速的最终结果与汇总(供 CLI emitter 使用)。
+type TestSummary struct {
+	Nodes        render.Nodes
+	Traffic      int64
+	Duration     string
+	SuccessCount int
+	LinksCount   int
+}
+
+// renderCSVBytes 把结果渲染为 CSV(机器友好:速度为字节/秒整数,与 JSON 一致)。
+func renderCSVBytes(summary TestSummary) ([]byte, error) {
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	header := []string{"id", "group", "remarks", "protocol", "ping_ms",
+		"avg_download_bytes_per_sec", "max_download_bytes_per_sec",
+		"avg_upload_bytes_per_sec", "max_upload_bytes_per_sec",
+		"traffic_bytes", "success", "link"}
+	if err := w.Write(header); err != nil {
+		return nil, err
+	}
+	for _, n := range summary.Nodes {
+		ping := n.Ping
+		if ping == "" {
+			ping = "0"
+		}
+		row := []string{
+			strconv.Itoa(n.Id), n.Group, n.Remarks, n.Protocol, ping,
+			strconv.FormatInt(n.AvgSpeed, 10), strconv.FormatInt(n.MaxSpeed, 10),
+			strconv.FormatInt(n.UploadSpeed, 10), strconv.FormatInt(n.MaxUploadSpeed, 10),
+			strconv.FormatInt(n.Traffic, 10), strconv.FormatBool(n.Success), n.Link,
+		}
+		if err := w.Write(row); err != nil {
+			return nil, err
+		}
+	}
+	w.Flush()
+	return buf.Bytes(), w.Error()
+}
+
+// renderTextBytes 输出测通节点的分享链接(每行一条,可当订阅导入)。
+func renderTextBytes(summary TestSummary) []byte {
+	var links []string
+	for _, n := range summary.Nodes {
+		if n.Ping != "0" || n.AvgSpeed > 0 || n.MaxSpeed > 0 {
+			links = append(links, n.Link)
+		}
+	}
+	return []byte(strings.Join(links, "\n"))
+}
+
+// renderJSONBytes 输出与 web JSONOutput 一致的缩进 JSON。
+func renderJSONBytes(summary TestSummary, opts *ProfileTestOptions) ([]byte, error) {
+	out := JSONOutput{
+		Nodes:        summary.Nodes,
+		Options:      *opts,
+		Traffic:      summary.Traffic,
+		Duration:     summary.Duration,
+		SuccessCount: summary.SuccessCount,
+		LinksCount:   summary.LinksCount,
+	}
+	return json.MarshalIndent(&out, "", "  ")
 }

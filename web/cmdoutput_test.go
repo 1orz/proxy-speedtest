@@ -1,8 +1,12 @@
 package web
 
 import (
+	"encoding/csv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/1orz/proxy-speedtest/web/render"
 )
 
 func fixedNow() time.Time { return time.Date(2026, 7, 24, 15, 30, 5, 0, time.UTC) }
@@ -50,5 +54,73 @@ func TestParseOutputPlan(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func sampleSummary() TestSummary {
+	return TestSummary{
+		Nodes: render.Nodes{
+			{Id: 0, Group: "g", Remarks: "HK, Premium", Protocol: "vmess/ws", Ping: "42",
+				AvgSpeed: 1000, MaxSpeed: 2000, UploadSpeed: 300, MaxUploadSpeed: 500,
+				Traffic: 99, Success: true, Link: "vmess://a"},
+			{Id: 1, Group: "g", Remarks: "Dead", Protocol: "ss", Ping: "0",
+				AvgSpeed: 0, MaxSpeed: 0, Success: false, Link: "ss://b"},
+		},
+		Traffic: 99, Duration: "0m 3s", SuccessCount: 1, LinksCount: 2,
+	}
+}
+
+func TestRenderCSVBytes(t *testing.T) {
+	b, err := renderCSVBytes(sampleSummary())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := csv.NewReader(strings.NewReader(string(b)))
+	rows, err := r.ReadAll()
+	if err != nil {
+		t.Fatalf("csv not parseable: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows=%d want 3", len(rows))
+	}
+	wantHeader := []string{"id", "group", "remarks", "protocol", "ping_ms",
+		"avg_download_bytes_per_sec", "max_download_bytes_per_sec",
+		"avg_upload_bytes_per_sec", "max_upload_bytes_per_sec",
+		"traffic_bytes", "success", "link"}
+	for i, h := range wantHeader {
+		if rows[0][i] != h {
+			t.Fatalf("header[%d]=%q want %q", i, rows[0][i], h)
+		}
+	}
+	if rows[1][2] != "HK, Premium" {
+		t.Fatalf("remarks=%q want %q", rows[1][2], "HK, Premium")
+	}
+	if rows[1][10] != "true" || rows[2][10] != "false" {
+		t.Fatalf("success col wrong: %q / %q", rows[1][10], rows[2][10])
+	}
+	if rows[1][4] != "42" || rows[2][4] != "0" {
+		t.Fatalf("ping col wrong: %q / %q", rows[1][4], rows[2][4])
+	}
+	if rows[1][5] != "1000" || rows[1][7] != "300" {
+		t.Fatalf("speed cols wrong: %q / %q", rows[1][5], rows[1][7])
+	}
+}
+
+func TestRenderTextBytes(t *testing.T) {
+	got := string(renderTextBytes(sampleSummary()))
+	if got != "vmess://a" {
+		t.Fatalf("text=%q want only working link", got)
+	}
+}
+
+func TestRenderJSONBytes(t *testing.T) {
+	opts := &ProfileTestOptions{GroupName: "Default"}
+	b, err := renderJSONBytes(sampleSummary(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "\"successCount\": 1") || !strings.Contains(s, "\"linksCount\": 2") {
+		t.Fatalf("json missing summary counts: %s", s)
 	}
 }
