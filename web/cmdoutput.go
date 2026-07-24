@@ -5,6 +5,8 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -213,4 +215,73 @@ func renderTableString(summary TestSummary) string {
 		summary.LinksCount, summary.SuccessCount,
 		download.ByteCountIECTrim(summary.Traffic), summary.Duration))
 	return b.String()
+}
+
+// emitCMD 按 targets 渲染并输出。数据类节点先按 SortMethod 排序(副本,不动 summary);
+// 空 Path 写 stdout,否则写文件。图片类经 savePicPath 落盘。任一失败即返回错误(→非零退出)。
+func (p *ProfileTest) emitCMD(summary TestSummary, targets []OutputTarget) error {
+	sorted := make(render.Nodes, len(summary.Nodes))
+	copy(sorted, summary.Nodes)
+	sorted.Sort(p.Options.SortMethod)
+	s := summary
+	s.Nodes = sorted
+
+	for _, t := range targets {
+		if t.Format == "pic" {
+			if err := p.savePicPath(s, t.Path); err != nil {
+				return fmt.Errorf("write pic %s: %w", t.Path, err)
+			}
+			slog.Info("pic result saved", "path", t.Path)
+			continue
+		}
+		var data []byte
+		var err error
+		switch t.Format {
+		case "json":
+			data, err = renderJSONBytes(s, p.Options)
+		case "csv":
+			data, err = renderCSVBytes(s)
+		case "text":
+			data = renderTextBytes(s)
+		case "table":
+			data = []byte(renderTableString(s))
+		default:
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if t.Path == "" {
+			if _, err := os.Stdout.Write(data); err != nil {
+				return err
+			}
+			if len(data) == 0 || data[len(data)-1] != '\n' {
+				fmt.Fprintln(os.Stdout)
+			}
+		} else {
+			if err := os.WriteFile(t.Path, data, 0644); err != nil {
+				return fmt.Errorf("write %s: %w", t.Path, err)
+			}
+			slog.Info("result saved", "format", t.Format, "path", t.Path)
+		}
+	}
+	return nil
+}
+
+// savePicPath 把结果渲染为 PNG 到指定路径(与 savePic 同,但路径显式传入)。
+func (p *ProfileTest) savePicPath(summary TestSummary, path string) error {
+	fontPath := "WenQuanYiMicroHei-01.ttf"
+	options := render.NewTableOptions(40, 30, 0.5, 0.5, p.Options.FontSize, 0.5, fontPath,
+		p.Options.Language, p.Options.Theme, "Asia/Shanghai", FontBytes)
+	options.SetAppearance(p.Options.Appearance)
+	v4Line, v6Line := p.ipInfoLines()
+	options.SetIPInfo(v4Line, v6Line)
+	table, err := render.NewTableWithOption(summary.Nodes, &options)
+	if err != nil {
+		return err
+	}
+	msg := table.FormatTraffic(download.ByteCountIECTrim(summary.Traffic), summary.Duration,
+		fmt.Sprintf("%d/%d", summary.SuccessCount, summary.LinksCount))
+	table.Draw(path, msg)
+	return nil
 }
