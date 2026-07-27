@@ -327,71 +327,81 @@ export function TestForm() {
             </AnimatePresence>
           </div>
 
-          {/* 并发数:离散滑动块 */}
-          <div className="space-y-2">
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <label className="text-sm font-medium text-muted-foreground">{t('form.concurrency')}</label>
-              <span className="text-xs text-muted-foreground">{t('form.concurrency.hint')}</span>
-            </div>
-            <StepSlider steps={CONCURRENCY_STEPS} value={options.concurrency} onChange={(n) => setOptions({ concurrency: n })} disabled={loading} />
-          </div>
+          {/* 参数区:PC(md+)双列——左列「并发数↑ / 下载线程数↓」,右列「测试项↑ / 测试时长+去重↓」,
+              各列内一上一下、彼此独立堆叠,比原来的整行铺开更省纵向空间;手机(单列)顺序堆叠 */}
+          <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-5">
+            {/* 左列 */}
+            <div className="space-y-5">
+              {/* 并发数:离散滑动块 */}
+              <div className="space-y-2">
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <label className="text-sm font-medium text-muted-foreground">{t('form.concurrency')}</label>
+                  <span className="text-xs text-muted-foreground">{t('form.concurrency.hint')}</span>
+                </div>
+                <StepSlider steps={CONCURRENCY_STEPS} value={options.concurrency} onChange={(n) => setOptions({ concurrency: n })} disabled={loading} />
+              </div>
 
-          {/* 下载线程数:单节点测速内的并行连接数(与"并发数"是两个维度) */}
-          <div className="space-y-2">
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <label className="text-sm font-medium text-muted-foreground">{t('form.threads')}</label>
-              <span className="text-xs text-muted-foreground">{t('form.threads.hint')}</span>
+              {/* 下载线程数:单节点测速内的并行连接数(与"并发数"是两个维度) */}
+              <div className="space-y-2">
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <label className="text-sm font-medium text-muted-foreground">{t('form.threads')}</label>
+                  <span className="text-xs text-muted-foreground">{t('form.threads.hint')}</span>
+                </div>
+                <StepSlider steps={THREAD_STEPS} value={options.threads} onChange={(n) => setOptions({ threads: n })} disabled={loading} />
+              </div>
             </div>
-            <StepSlider steps={THREAD_STEPS} value={options.threads} onChange={(n) => setOptions({ threads: n })} disabled={loading} />
-          </div>
 
-          {/* 测试项:三段切换 */}
-          <div className="space-y-2 md:col-span-2">
-            <label className="text-sm font-medium text-muted-foreground">{t('form.testItems')}</label>
-            <div className="grid grid-cols-3 gap-1 rounded-lg bg-secondary/50 p-1">
-              {TEST_MODES.map((m) => (
-                <button
-                  key={m.value}
-                  type="button"
-                  disabled={loading}
-                  onClick={() => setOptions({ speedtestMode: m.value })}
-                  className={cn(
-                    'rounded-md px-3 py-2 text-sm font-medium transition-all disabled:opacity-50 disabled:pointer-events-none',
-                    options.speedtestMode === m.value
-                      ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/25'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  {m.value === 'all' ? t('form.mode.all') : m.label}
-                </button>
-              ))}
-            </div>
-          </div>
+            {/* 右列 */}
+            <div className="space-y-5">
+              {/* 测试项:三段切换 */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-muted-foreground">{t('form.testItems')}</label>
+                <div className="grid grid-cols-3 gap-1 rounded-lg bg-secondary/50 p-1">
+                  {TEST_MODES.map((m) => (
+                    <button
+                      key={m.value}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => setOptions({ speedtestMode: m.value })}
+                      className={cn(
+                        'rounded-md px-3 py-2 text-sm font-medium transition-all disabled:opacity-50 disabled:pointer-events-none',
+                        options.speedtestMode === m.value
+                          ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/25'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {m.value === 'all' ? t('form.mode.all') : m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          {/* 测试时长 + 去重 */}
-          <div className="grid grid-cols-2 gap-4 md:col-span-2">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-muted-foreground">{t('form.duration')}</label>
-              <NumberField
-                min={5}
-                max={60}
-                fallback={15}
-                value={options.timeout}
-                onChange={(n) => setOptions({ timeout: n })}
-                disabled={loading}
-              />
-            </div>
-            <div className="flex items-end pb-2.5">
-              <div className="flex items-center gap-3">
-                <Checkbox
-                  id="unique"
-                  checked={options.unique}
-                  onCheckedChange={(checked) => setOptions({ unique: !!checked })}
-                  disabled={loading}
-                />
-                <label htmlFor="unique" className="text-sm font-medium cursor-pointer">
-                  {t('form.unique')}
-                </label>
+              {/* 测试时长 + 去重 */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground">{t('form.duration')}</label>
+                  <NumberField
+                    min={5}
+                    max={60}
+                    fallback={15}
+                    value={options.timeout}
+                    onChange={(n) => setOptions({ timeout: n })}
+                    disabled={loading}
+                  />
+                </div>
+                <div className="flex items-end pb-2.5">
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      id="unique"
+                      checked={options.unique}
+                      onCheckedChange={(checked) => setOptions({ unique: !!checked })}
+                      disabled={loading}
+                    />
+                    <label htmlFor="unique" className="text-sm font-medium cursor-pointer">
+                      {t('form.unique')}
+                    </label>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
