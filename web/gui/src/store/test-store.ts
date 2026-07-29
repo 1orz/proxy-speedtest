@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { TestNode, TestOptions, WebSocketMessage } from '@/types'
+import { apiUrl } from '@/lib/api'
 import { tt } from '@/lib/i18n'
 import { getSpeed, formatSeconds } from '@/lib/utils'
 
@@ -185,7 +186,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
       })),
     }
     try {
-      const resp = await fetch('/renderImage', {
+      const resp = await fetch(apiUrl('renderImage'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

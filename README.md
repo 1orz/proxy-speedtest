@@ -156,6 +156,34 @@ docker build --network=host -t proxy-speedtest:$(git describe --tags --abbrev=0)
 docker run -p 10888:10888/tcp proxy-speedtest:$(git describe --tags --abbrev=0)
 ```
 
+## Deploy under a sub-path
+
+The frontend is built with a relative base (`base: './'` in `web/gui/vite.config.ts`), so one `dist`
+works both at a domain root and under a prefix — assets, the JSON endpoints and the `/test` WebSocket
+are all resolved against the page's own URL (`web/gui/src/lib/api.ts`), with no rebuild per mount point.
+
+The server only registers root-level routes, so the reverse proxy has to **strip the prefix**, and the
+page must be entered **with a trailing slash**:
+
+```nginx
+location = /speedtest { return 301 /speedtest/; }    # relative URLs need the trailing slash
+
+location /speedtest/ {
+    proxy_pass http://127.0.0.1:10888/;              # trailing slash here = strip the prefix
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;          # /test is a WebSocket
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 3600s;                        # a run holds the socket open for minutes
+    proxy_buffering off;
+}
+```
+
+Caddy equivalent: `handle_path /speedtest/* { reverse_proxy 127.0.0.1:10888 }`.
+
+Start the backend with an explicit `-p 10888`: the 10888 default only applies when the binary is
+invoked with no arguments at all, otherwise `-p` falls back to 8090.
+
 ## Credits
 
 - [xxf098](https://github.com/xxf098/LiteSpeedTest)

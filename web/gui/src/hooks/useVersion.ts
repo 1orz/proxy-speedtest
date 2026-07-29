@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiUrl } from '@/lib/api'
 
 // 只保留版本号本身,去掉 git describe 的提交后缀:v1.6.0-4-gb31d493 → v1.6.0(含 -dirty 也一并去掉)。
 function cleanVersion(v: string): string {
@@ -17,7 +18,7 @@ export function useVersion(): string {
     if (cached) return // 已有缓存:state 初始值即为它,无需再 setState
     let alive = true
     if (!inflight) {
-      inflight = fetch('/version')
+      inflight = fetch(apiUrl('version'))
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           cached = d?.version ? cleanVersion(String(d.version)) : BUILD_VERSION

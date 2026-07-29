@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { wsUrl } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useTestStore } from '@/store/test-store'
 import { useI18n } from '@/hooks/useI18n'
@@ -182,9 +183,8 @@ export function TestForm() {
       uploadHeaders,
     })
 
-    // 按页面协议选择 ws/wss,HTTPS 部署下才不会被混合内容策略拦截
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    connect(`${proto}//${window.location.host}/test`)
+    // 相对当前页面目录解析,二级路径部署(/speedtest/)下也能打中 /speedtest/test
+    connect(wsUrl('test'))
 
     // 等待连接建立后发送;连接失败(ws 被 onerror/onclose 置空)或超过重试上限即停止,
     // 避免原先"永远 100ms 轮询"造成的死循环与定时器泄漏。

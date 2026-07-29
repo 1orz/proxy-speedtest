@@ -9,6 +9,10 @@ const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'ut
 
 // https://vite.dev/config/
 export default defineConfig({
+  // 产物内所有资源引用走相对路径(./assets/...),而不是绝对的 /assets/...。
+  // 这样同一份 dist 既能挂在域名根目录,也能挂在二级路径(如 /speedtest/)下,
+  // 无需按部署路径重新编译。运行时的接口地址同样相对解析,见 src/lib/api.ts。
+  base: './',
   plugins: [react(), tailwindcss()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
