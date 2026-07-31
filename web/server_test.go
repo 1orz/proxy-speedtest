@@ -13,6 +13,16 @@ type concurrentDetectWriter struct {
 	concurrent atomic.Bool
 }
 
+type recordingWriter struct {
+	calls atomic.Int64
+	err   error
+}
+
+func (w *recordingWriter) WriteMessage(_ int, _ []byte) error {
+	w.calls.Add(1)
+	return w.err
+}
+
 func (w *concurrentDetectWriter) WriteMessage(_ int, _ []byte) error {
 	if w.active.Add(1) != 1 {
 		w.concurrent.Store(true)
@@ -46,3 +56,21 @@ func TestLockedMessageWriterSerializesWrites(t *testing.T) {
 		t.Fatalf("calls=%d want 50", got)
 	}
 }
+
+func TestFanoutMessageWriterWritesAllDestinations(t *testing.T) {
+	wantErr := &writerError{}
+	first := &recordingWriter{err: wantErr}
+	second := &recordingWriter{}
+	w := &fanoutMessageWriter{writers: []MessageWriter{first, second}}
+
+	if err := w.WriteMessage(1, []byte("sample")); err != wantErr {
+		t.Fatalf("error=%v want %v", err, wantErr)
+	}
+	if first.calls.Load() != 1 || second.calls.Load() != 1 {
+		t.Fatalf("fanout calls=%d/%d want 1/1", first.calls.Load(), second.calls.Load())
+	}
+}
+
+type writerError struct{}
+
+func (*writerError) Error() string { return "writer error" }

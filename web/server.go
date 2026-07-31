@@ -41,6 +41,20 @@ func (w *lockedMessageWriter) WriteMessage(messageType int, data []byte) error {
 	return w.writer.WriteMessage(messageType, data)
 }
 
+type fanoutMessageWriter struct {
+	writers []MessageWriter
+}
+
+func (w *fanoutMessageWriter) WriteMessage(messageType int, data []byte) error {
+	var firstErr error
+	for _, writer := range w.writers {
+		if err := writer.WriteMessage(messageType, data); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func ServeFile(port int, bind string) error {
 	// TODO: Mobile UI
 	mux := http.NewServeMux()
@@ -176,7 +190,10 @@ func updateTest(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		p := ProfileTest{
-			Writer:      writer,
+			Writer: &fanoutMessageWriter{writers: []MessageWriter{
+				writer,
+				NewCMDProgressWriter(os.Stderr),
+			}},
 			MessageType: mt,
 			Links:       links,
 			Groups:      groups,

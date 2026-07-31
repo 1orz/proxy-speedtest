@@ -17,6 +17,7 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 ### Web mode vs CLI mode
 
 - **No subscription/link argument → web mode.** Starts the web UI (default `http://127.0.0.1:10888/`).
+  Per-second download/upload samples are sent to both the browser and the server's stderr.
 - **A subscription link, a share link (`vmess://` / `vless://` / `trojan://` / `ss://` …), or a local
   file → CLI mode.** Runs the speed test directly and prints/saves the result. Live progress goes to
   **stderr** with one download/upload sample per second; the result data goes to **stdout** (so it
