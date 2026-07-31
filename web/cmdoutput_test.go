@@ -11,6 +11,35 @@ import (
 
 func fixedNow() time.Time { return time.Date(2026, 7, 24, 15, 30, 5, 0, time.UTC) }
 
+func TestMergeHeaderLists(t *testing.T) {
+	config := []HeaderKV{
+		{Name: "Authorization", Value: "config"},
+		{Name: "X-Config", Value: "kept"},
+	}
+	common := []HeaderKV{
+		{Name: "authorization", Value: "common"},
+		{Name: "X-Common", Value: "both"},
+	}
+	directional := []HeaderKV{
+		{Name: "AUTHORIZATION", Value: "directional"},
+		{Name: " ", Value: "ignored"},
+	}
+
+	got := mergeHeaderLists(config, common, directional)
+	if len(got) != 3 {
+		t.Fatalf("len=%d want 3: %+v", len(got), got)
+	}
+	if got[0].Name != "AUTHORIZATION" || got[0].Value != "directional" {
+		t.Fatalf("override failed: %+v", got[0])
+	}
+	if got[1] != (HeaderKV{Name: "X-Config", Value: "kept"}) {
+		t.Fatalf("config header changed: %+v", got[1])
+	}
+	if got[2] != (HeaderKV{Name: "X-Common", Value: "both"}) {
+		t.Fatalf("common header missing: %+v", got[2])
+	}
+}
+
 func TestParseOutputPlan(t *testing.T) {
 	ts := "speedtest-20260724-153005"
 	cases := []struct {

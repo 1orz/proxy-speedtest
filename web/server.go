@@ -18,15 +18,28 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/1orz/proxy-speedtest/config"
 	C "github.com/1orz/proxy-speedtest/constant"
 	"github.com/1orz/proxy-speedtest/download"
 	"github.com/1orz/proxy-speedtest/utils"
 	"github.com/1orz/proxy-speedtest/web/render"
+	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{}
+
+// lockedMessageWriter serializes writes to a shared WebSocket connection.
+// Gorilla WebSocket permits multiple concurrent readers but only one writer.
+type lockedMessageWriter struct {
+	mu     sync.Mutex
+	writer MessageWriter
+}
+
+func (w *lockedMessageWriter) WriteMessage(messageType int, data []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.WriteMessage(messageType, data)
+}
 
 func ServeFile(port int, bind string) error {
 	// TODO: Mobile UI
@@ -121,6 +134,7 @@ func updateTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.Close()
+	writer := &lockedMessageWriter{writer: c}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	for {
@@ -133,7 +147,7 @@ func updateTest(w http.ResponseWriter, r *http.Request) {
 		links, groups, options, err := parseMessage(message)
 		if err != nil {
 			msg := `{"info": "error", "reason": "invalidsub"}`
-			c.WriteMessage(mt, []byte(msg))
+			writer.WriteMessage(mt, []byte(msg))
 			continue
 		}
 		if options.Unique {
@@ -162,7 +176,7 @@ func updateTest(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		p := ProfileTest{
-			Writer:      c,
+			Writer:      writer,
 			MessageType: mt,
 			Links:       links,
 			Groups:      groups,
@@ -325,6 +339,17 @@ func TestFromCMD(subscription string, configPath *string, cmdOpts *CMDOptions) e
 		if cmdOpts.DownloadSize != "" {
 			options.DownloadSize = cmdOpts.DownloadSize
 		}
+		if cmdOpts.UploadEnableSet || cmdOpts.UploadEnable {
+			options.UploadEnable = cmdOpts.UploadEnable
+		}
+		if cmdOpts.UploadURL != "" {
+			options.UploadURL = cmdOpts.UploadURL
+		}
+		if cmdOpts.UploadSize != "" {
+			options.UploadSize = cmdOpts.UploadSize
+		}
+		options.DownloadHeaders = mergeHeaderLists(options.DownloadHeaders, cmdOpts.CommonHeaders, cmdOpts.DownloadHeaders)
+		options.UploadHeaders = mergeHeaderLists(options.UploadHeaders, cmdOpts.CommonHeaders, cmdOpts.UploadHeaders)
 		if cmdOpts.Threads > 0 {
 			options.Threads = cmdOpts.Threads
 			if options.Threads > 256 {

@@ -19,7 +19,8 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 - **No subscription/link argument → web mode.** Starts the web UI (default `http://127.0.0.1:10888/`).
 - **A subscription link, a share link (`vmess://` / `vless://` / `trojan://` / `ss://` …), or a local
   file → CLI mode.** Runs the speed test directly and prints/saves the result. Live progress goes to
-  **stderr**; the result data goes to **stdout** (so it pipes cleanly).
+  **stderr** with one download/upload sample per second; the result data goes to **stdout** (so it
+  pipes cleanly).
 
 ```bash
 # web mode: open http://127.0.0.1:10888/ in your browser
@@ -54,6 +55,14 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 
 # custom download URL
 ./proxy-speedtest --test https://sub --download-url "https://speed.cloudflare.com/__down?bytes=50000000"
+
+# download + upload with custom endpoints and request headers
+./proxy-speedtest --test https://sub --upload \
+  --download-url "https://speed.example.com/__down?bytes=50000000" \
+  --upload-url "https://speed.example.com/__up" \
+  -H "X-Speedtest-Key: shared-secret" \
+  -dH "Accept-Encoding: identity" \
+  -uH "Authorization: Bearer upload-token"
 
 # use a config file
 ./proxy-speedtest --config config.json --test https://sub
@@ -100,6 +109,12 @@ avg_upload_bytes_per_sec, max_upload_bytes_per_sec, traffic_bytes, success, link
 | `-threads` | 1 | Parallel download connections per node |
 | `-download-size` | | Download endpoint preset: cloudflare, hetzner-de, hetzner-us, linode-jp, vultr-sg, ovh-eu, datapacket-us, huawei-cn, worker |
 | `-download-url` | | Custom download URL for speed test |
+| `-upload`, `-upload-enable` | false | Also test upload speed after download |
+| `-upload-size` | | Upload endpoint preset: cloudflare, dlptest, worker |
+| `-upload-url` | | Custom upload URL (HTTP POST sink) |
+| `-H` | | HTTP header for download and upload; repeatable (`Name: Value`) |
+| `-dH` | | Download-only HTTP header; repeatable (`Name: Value`) |
+| `-uH` | | Upload-only HTTP header; repeatable (`Name: Value`) |
 | `-config` | | Config file path (JSON format) |
 | `-log-level` | info | Log level: debug, info, warning, error, silent (silent also hides progress) |
 | `-p` | 10888 | Web server port (CLI mode ignores it) |
@@ -122,9 +137,18 @@ avg_upload_bytes_per_sec, max_upload_bytes_per_sec, traffic_bytes, success, link
     "fontSize": 24,
     "unique": true,              // remove duplicated value
     "theme": "rainbow",
-    "outputMode": 1              // 0: base64 1: pic path 2: no pic 3: json 4: txt
+    "outputMode": 1,             // 0: base64 1: pic path 2: no pic 3: json 4: txt
+    "uploadEnable": true,
+    "downloadUrl": "https://speed.example.com/__down?bytes=50000000",
+    "uploadUrl": "https://speed.example.com/__up",
+    "downloadHeaders": [{"name": "X-Speedtest-Key", "value": "secret"}],
+    "uploadHeaders": [{"name": "X-Speedtest-Key", "value": "secret"}]
 }
 ```
+
+CLI headers are merged on top of config-file headers. `-H` applies to both directions, while `-dH`
+and `-uH` override a same-named common header for download and upload respectively. Header names are
+matched case-insensitively.
 
 ### Run as a gRPC server
 

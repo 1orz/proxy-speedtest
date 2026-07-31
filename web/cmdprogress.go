@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"sync"
+
+	"github.com/1orz/proxy-speedtest/download"
 )
 
 type nodeProgress struct {
@@ -40,6 +42,21 @@ func formatProgressLine(done, total int, np nodeProgress) string {
 		metrics = strings.Join(parts, "  ")
 	}
 	return fmt.Sprintf("[%d/%d] %s %s  %s", done, total, status, np.remarks, metrics)
+}
+
+func formatLiveProgressLine(done, total int, np nodeProgress, direction, average, maximum string, current int64) string {
+	arrow := "↓"
+	if direction == "up" {
+		arrow = "↑"
+	}
+	if average == "" {
+		average = "N/A"
+	}
+	if maximum == "" {
+		maximum = "N/A"
+	}
+	return fmt.Sprintf("[%d/%d] … %s  %s %s  avg %s  max %s",
+		done, total, np.remarks, arrow, download.ByteCountIEC(current), average, maximum)
 }
 
 // CMDProgressWriter 消费测速过程消息,逐节点把进度打到 out(通常 os.Stderr)。
@@ -79,10 +96,12 @@ func (w *CMDProgressWriter) WriteMessage(_ int, data []byte) error {
 	case "gotspeed":
 		if np := w.nodes[m.ID]; np != nil {
 			np.down = m.Speed
+			fmt.Fprintln(w.out, formatLiveProgressLine(w.done, w.total, *np, "down", m.Speed, m.MaxSpeed, m.Traffic))
 		}
 	case "gotupload":
 		if np := w.nodes[m.ID]; np != nil {
 			np.up = m.UploadSpeed
+			fmt.Fprintln(w.out, formatLiveProgressLine(w.done, w.total, *np, "up", m.UploadSpeed, m.MaxUploadSpeed, m.Traffic))
 		}
 	case "endone":
 		w.done++

@@ -26,6 +26,33 @@ var validOutputFormats = map[string]bool{
 	"json": true, "csv": true, "text": true, "table": true, "pic": true, "none": true,
 }
 
+// mergeHeaderLists merges headers in priority order. Later lists override
+// earlier lists using case-insensitive HTTP header names.
+func mergeHeaderLists(groups ...[]HeaderKV) []HeaderKV {
+	var merged []HeaderKV
+	for _, group := range groups {
+		for _, header := range group {
+			name := strings.TrimSpace(header.Name)
+			if name == "" {
+				continue
+			}
+			header.Name = name
+			replaced := false
+			for i := range merged {
+				if strings.EqualFold(merged[i].Name, name) {
+					merged[i] = header
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				merged = append(merged, header)
+			}
+		}
+	}
+	return merged
+}
+
 func extFor(format string) string {
 	switch format {
 	case "json":

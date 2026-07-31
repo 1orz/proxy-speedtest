@@ -310,16 +310,23 @@ type ProfileTestOptions struct {
 }
 
 type CMDOptions struct {
-	Timeout       int
-	Concurrency   int
-	Output        string // json, text, pic, none
-	OutputFile    string // output file path for JSON result
-	OutputPicPath string // output pic path (can be used with any output mode)
-	DownloadURL   string
-	DownloadSize  string
-	Threads       int    // parallel download connections per node
-	Mode          string // pingonly, speedonly, all
-	Silent        bool   // -log-level silent: 不打印 stderr 进度
+	Timeout         int
+	Concurrency     int
+	Output          string // json, text, pic, none
+	OutputFile      string // output file path for JSON result
+	OutputPicPath   string // output pic path (can be used with any output mode)
+	DownloadURL     string
+	DownloadSize    string
+	UploadEnable    bool
+	UploadEnableSet bool
+	UploadURL       string
+	UploadSize      string
+	CommonHeaders   []HeaderKV
+	DownloadHeaders []HeaderKV
+	UploadHeaders   []HeaderKV
+	Threads         int    // parallel download connections per node
+	Mode            string // pingonly, speedonly, all
+	Silent          bool   // -log-level silent: 不打印 stderr 进度
 }
 
 type JSONOutput struct {

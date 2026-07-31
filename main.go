@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
+	"strings"
 
 	grpcServer "github.com/1orz/proxy-speedtest/api/rpc/liteserver"
 	C "github.com/1orz/proxy-speedtest/constant"
@@ -16,29 +18,102 @@ import (
 	_ "github.com/1orz/proxy-speedtest/internal/xray"
 )
 
+// headerFlags implements a repeatable curl-style HTTP header flag.
+type headerFlags []webServer.HeaderKV
+
+func (h *headerFlags) String() string {
+	values := make([]string, 0, len(*h))
+	for _, header := range *h {
+		values = append(values, header.Name+": "+header.Value)
+	}
+	return strings.Join(values, ", ")
+}
+
+func (h *headerFlags) Set(value string) error {
+	name, headerValue, ok := strings.Cut(value, ":")
+	name = strings.TrimSpace(name)
+	if !ok || name == "" {
+		return fmt.Errorf("header must use 'Name: Value' format")
+	}
+	*h = append(*h, webServer.HeaderKV{Name: name, Value: strings.TrimSpace(headerValue)})
+	return nil
+}
+
+// optionalBool records whether a boolean flag was explicitly provided, so a
+// config-file value can be preserved when the CLI flag is absent.
+type optionalBool struct {
+	value bool
+	set   bool
+}
+
+func (b *optionalBool) String() string   { return strconv.FormatBool(b.value) }
+func (b *optionalBool) IsBoolFlag() bool { return true }
+func (b *optionalBool) Set(value string) error {
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return err
+	}
+	b.value = parsed
+	b.set = true
+	return nil
+}
+
 var (
-	port         = flag.Int("p", 8090, "set port")
-	bind         = flag.String("bind", "", "bind web server to an address or interface name, e.g. 100.x.x.x or tailscale0 (empty = all interfaces)")
-	test         = flag.String("test", "", "test from command line with subscription link or file")
-	conf         = flag.String("config", "", "config file path (JSON format)")
-	grpc         = flag.Bool("grpc", false, "start grpc server")
-	version      = flag.Bool("v", false, "show current version")
-	timeout      = flag.Int("timeout", 16, "timeout for each node test in seconds")
-	concurrency  = flag.Int("concurrency", 2, "number of concurrent tests")
-	output       = flag.String("output", "json", "output formats (comma-separated): json, csv, text, table, pic, none")
-	outputFile   = flag.String("output-file", "", "output file path for JSON result")
-	outputPic    = flag.String("output-pic", "", "output pic path (can be used with any output format)")
-	downloadURL  = flag.String("download-url", "", "custom download URL for speed test")
-	downloadSize = flag.String("download-size", "", "download endpoint preset key (cloudflare, hetzner-de, hetzner-us, linode-jp, vultr-sg, ovh-eu, datapacket-us, huawei-cn)")
-	threads      = flag.Int("threads", 1, "parallel download connections per node speed test (1=single thread)")
-	mode         = flag.String("mode", "all", "test mode: pingonly, speedonly, all")
-	logLevel     = flag.String("log-level", "info", "log level: debug, info, warning, error, silent")
+	port            = flag.Int("p", 8090, "set port")
+	bind            = flag.String("bind", "", "bind web server to an address or interface name, e.g. 100.x.x.x or tailscale0 (empty = all interfaces)")
+	test            = flag.String("test", "", "test from command line with subscription link or file")
+	conf            = flag.String("config", "", "config file path (JSON format)")
+	grpc            = flag.Bool("grpc", false, "start grpc server")
+	version         = flag.Bool("v", false, "show current version")
+	timeout         = flag.Int("timeout", 16, "timeout for each node test in seconds")
+	concurrency     = flag.Int("concurrency", 2, "number of concurrent tests")
+	output          = flag.String("output", "json", "output formats (comma-separated): json, csv, text, table, pic, none")
+	outputFile      = flag.String("output-file", "", "output file path for JSON result")
+	outputPic       = flag.String("output-pic", "", "output pic path (can be used with any output format)")
+	downloadURL     = flag.String("download-url", "", "custom download URL for speed test")
+	downloadSize    = flag.String("download-size", "", "download endpoint preset key (cloudflare, hetzner-de, hetzner-us, linode-jp, vultr-sg, ovh-eu, datapacket-us, huawei-cn, worker)")
+	upload          optionalBool
+	uploadURL       = flag.String("upload-url", "", "custom upload URL (HTTP POST sink) for speed test")
+	uploadSize      = flag.String("upload-size", "", "upload endpoint preset key (cloudflare, dlptest, worker)")
+	allHeaders      headerFlags
+	downloadHeaders headerFlags
+	uploadHeaders   headerFlags
+	threads         = flag.Int("threads", 1, "parallel download connections per node speed test (1=single thread)")
+	mode            = flag.String("mode", "all", "test mode: pingonly, speedonly, all")
+	logLevel        = flag.String("log-level", "info", "log level: debug, info, warning, error, silent")
 )
 
 // init 注册短参数别名,绑定到与长参数相同的变量(后解析者生效)。
 func init() {
 	flag.StringVar(output, "o", "json", "alias for -output")
 	flag.StringVar(outputFile, "f", "", "alias for -output-file")
+	flag.Var(&upload, "upload", "also test upload speed after download")
+	flag.Var(&upload, "upload-enable", "alias for -upload")
+	flag.Var(&allHeaders, "H", "HTTP header for both download and upload; repeatable, format: 'Name: Value'")
+	flag.Var(&downloadHeaders, "dH", "download-only HTTP header; repeatable, format: 'Name: Value'")
+	flag.Var(&uploadHeaders, "uH", "upload-only HTTP header; repeatable, format: 'Name: Value'")
+}
+
+func commandOptions() *webServer.CMDOptions {
+	return &webServer.CMDOptions{
+		Timeout:         *timeout,
+		Concurrency:     *concurrency,
+		Output:          *output,
+		OutputFile:      *outputFile,
+		OutputPicPath:   *outputPic,
+		DownloadURL:     *downloadURL,
+		DownloadSize:    *downloadSize,
+		UploadEnable:    upload.value,
+		UploadEnableSet: upload.set,
+		UploadURL:       *uploadURL,
+		UploadSize:      *uploadSize,
+		CommonHeaders:   []webServer.HeaderKV(allHeaders),
+		DownloadHeaders: []webServer.HeaderKV(downloadHeaders),
+		UploadHeaders:   []webServer.HeaderKV(uploadHeaders),
+		Threads:         *threads,
+		Mode:            *mode,
+		Silent:          *logLevel == "silent",
+	}
 }
 
 // fatal 无条件把致命错误打到 stderr 再退出;不经日志级别门控,
@@ -71,18 +146,7 @@ func main() {
 
 	// Test from command line
 	if *test != "" {
-		cmdOpts := &webServer.CMDOptions{
-			Timeout:       *timeout,
-			Concurrency:   *concurrency,
-			Output:        *output,
-			OutputFile:    *outputFile,
-			OutputPicPath: *outputPic,
-			DownloadURL:   *downloadURL,
-			DownloadSize:  *downloadSize,
-			Threads:       *threads,
-			Mode:          *mode,
-			Silent:        *logLevel == "silent",
-		}
+		cmdOpts := commandOptions()
 		if err := webServer.TestFromCMD(*test, conf, cmdOpts); err != nil {
 			fatal("command-line test failed", err)
 		}
@@ -99,18 +163,7 @@ func main() {
 
 	// Test a single link directly (if provided as argument)
 	if link != "" {
-		cmdOpts := &webServer.CMDOptions{
-			Timeout:       *timeout,
-			Concurrency:   *concurrency,
-			Output:        *output,
-			OutputFile:    *outputFile,
-			OutputPicPath: *outputPic,
-			DownloadURL:   *downloadURL,
-			DownloadSize:  *downloadSize,
-			Threads:       *threads,
-			Mode:          *mode,
-			Silent:        *logLevel == "silent",
-		}
+		cmdOpts := commandOptions()
 		if err := webServer.TestFromCMD(link, conf, cmdOpts); err != nil {
 			fatal("single-link test failed", err)
 		}

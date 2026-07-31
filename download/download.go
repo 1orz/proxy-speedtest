@@ -177,7 +177,8 @@ func DownloadWithURL(link string, timeout time.Duration, handshakeTimeout time.D
 
 // DownloadWithURLThreads 用 threads 条并行连接下载并聚合总吞吐。每条连接在超时前不断重新
 // 请求同一 URL,因此即便是很小的文件也能持续占满整个测试时长;上报给 resultChan 的每秒样本
-// 是所有线程之和,返回值为峰值每秒聚合速度。threads <= 1 时退回单连接实现(保留原有快速失败行为)。
+// 是所有线程之和,返回值为峰值每秒聚合速度。单线程也走同一 ticker,保证 CLI/WebSocket
+// 每秒都能收到一次采样,并在有限大小文件结束后继续请求直到超时。
 //
 // ctx 为调用方上下文:客户端断开/用户点终止时取消它,本次下载(含全部 worker)会立即停止,
 // 避免协程与代理连接泄漏。注意:threads 是"单个节点测速内部的并行连接数",与"并发数"(同时
@@ -196,14 +197,8 @@ func DownloadWithURLThreads(ctx context.Context, link string, timeout time.Durat
 	dlCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	if threads <= 1 {
-		option := DownloadOption{
-			DownloadTimeout:  timeout,
-			HandshakeTimeout: handshakeTimeout,
-			URL:              downloadURL,
-			Headers:          headers,
-		}
-		return downloadInternal(dlCtx, option, resultChan, startChan, dialer.DialContext)
+	if threads < 1 {
+		threads = 1
 	}
 
 	var counter atomic.Int64
@@ -272,16 +267,15 @@ func DownloadWithURLThreads(ctx context.Context, link string, timeout time.Durat
 	defer ticker.Stop()
 	var max int64
 	var total int64
-	flush := func() {
+	flush := func(reportZero bool) {
 		v := counter.Swap(0)
-		if v <= 0 {
-			return
+		if v > 0 {
+			total += v
+			if v > max {
+				max = v
+			}
 		}
-		total += v
-		if v > max {
-			max = v
-		}
-		if resultChan != nil {
+		if resultChan != nil && (reportZero || v > 0) {
 			// 发送也受 dlCtx 约束:调用方取消/读取方退出后不会永久阻塞
 			select {
 			case resultChan <- v:
@@ -292,16 +286,16 @@ func DownloadWithURLThreads(ctx context.Context, link string, timeout time.Durat
 	for {
 		select {
 		case <-ticker.C:
-			flush()
+			flush(true)
 			// 所有线程持续失败(始终 0 字节)时,最多等 ~5s 即判失败,避免对死节点空转满时长
 			if total == 0 && time.Since(start) >= 5*time.Second {
 				return 0, nil
 			}
 		case <-done:
-			flush()
+			flush(false)
 			return max, nil
 		case <-dlCtx.Done():
-			flush()
+			flush(false)
 			return max, nil
 		}
 	}
@@ -423,16 +417,15 @@ func UploadWithURLThreads(ctx context.Context, link string, timeout time.Duratio
 	defer ticker.Stop()
 	var max int64
 	var total int64
-	flush := func() {
+	flush := func(reportZero bool) {
 		v := counter.Swap(0)
-		if v <= 0 {
-			return
+		if v > 0 {
+			total += v
+			if v > max {
+				max = v
+			}
 		}
-		total += v
-		if v > max {
-			max = v
-		}
-		if resultChan != nil {
+		if resultChan != nil && (reportZero || v > 0) {
 			select {
 			case resultChan <- v:
 			case <-dlCtx.Done():
@@ -442,16 +435,16 @@ func UploadWithURLThreads(ctx context.Context, link string, timeout time.Duratio
 	for {
 		select {
 		case <-ticker.C:
-			flush()
+			flush(true)
 			// 所有线程持续失败(始终 0 字节)时最多等 ~5s 即判失败,避免对死节点空转满时长
 			if total == 0 && time.Since(start) >= 5*time.Second {
 				return 0, nil
 			}
 		case <-done:
-			flush()
+			flush(false)
 			return max, nil
 		case <-dlCtx.Done():
-			flush()
+			flush(false)
 			return max, nil
 		}
 	}
