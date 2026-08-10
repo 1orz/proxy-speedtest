@@ -100,6 +100,12 @@ func ParseLinks(message string) ([]string, error) {
 
 // api
 func ParseLinksWithOption(message string, opt ParseOption) ([]string, error) {
+	// 直连:direct:// 不是订阅也不是文件,直接当作唯一一条「节点」返回。
+	// 放在最前面,避免它被后面的 URL/文件/base64 探测误判。要求整段就只有这一条链接
+	// (无换行),这样「首行是 direct:// 的多行列表」仍按普通列表解析,不会被整体吞掉。
+	if trimmed := strings.TrimSpace(message); config.IsDirectLink(trimmed) && !strings.ContainsAny(trimmed, "\r\n") {
+		return []string{trimmed}, nil
+	}
 	// matched, err := regexp.MatchString(`^(?:https?:\/\/)(?:[^@\/\n]+@)?(?:www\.)?([^:\/\n]+)`, message)
 	if opt.Type == PARSE_URL || utils.IsUrl(message) {
 		slog.Debug("parsing subscription url", "url", message)
@@ -307,6 +313,18 @@ type ProfileTestOptions struct {
 	Appearance      string        `json:"appearance"`               // image appearance: "light"(default) | "dark"
 	DownloadHeaders []HeaderKV    `json:"downloadHeaders"`          // 用户自定义下载请求头(可选)
 	UploadHeaders   []HeaderKV    `json:"uploadHeaders"`            // 用户自定义上传请求头(可选)
+	DirectMode      bool          `json:"directMode"`               // 直连测速:不使用任何订阅/节点,只测本机上传下载
+}
+
+// hasSubscriptionInput 判断这次请求到底有没有「填了订阅」。注意是判断输入是否为空,
+// 而不是判断能否解析成功:填了但解析失败仍应报错,不能悄悄降级成直连测速。
+func (o *ProfileTestOptions) hasSubscriptionInput() bool {
+	for _, e := range o.Subscriptions {
+		if strings.TrimSpace(e.Subscription) != "" {
+			return true
+		}
+	}
+	return strings.TrimSpace(o.Subscription) != ""
 }
 
 type CMDOptions struct {
@@ -369,6 +387,13 @@ func parseMessage(message []byte) ([]string, []string, *ProfileTestOptions, erro
 		return options.Links, nil, options, nil
 	}
 	options.TestMode = ALLTEST
+
+	// 直连测速:前端显式勾选,或干脆没填订阅 —— 合成一条 direct:// 当作唯一节点,
+	// 于是「不填订阅」就退化成一个纯上传/下载带宽测试工具,后续流程完全不用分叉。
+	if options.DirectMode || !options.hasSubscriptionInput() {
+		options.DirectMode = true
+		return []string{config.DirectLink}, nil, options, nil
+	}
 
 	// 多订阅:逐条抓取/解析,拼出 links 及对齐的 groups;单条失败跳过不影响其它。
 	if len(options.Subscriptions) > 0 {
@@ -711,13 +736,7 @@ func (p *ProfileTest) savePic(nodes render.Nodes, traffic int64, duration string
 }
 
 func (p *ProfileTest) saveText(nodes render.Nodes) error {
-	var links []string
-	for _, node := range nodes {
-		if node.Ping != "0" || node.AvgSpeed > 0 || node.MaxSpeed > 0 {
-			links = append(links, node.Link)
-		}
-	}
-	data := []byte(strings.Join(links, "\n"))
+	data := []byte(strings.Join(workingLinks(nodes), "\n"))
 	return os.WriteFile("output.txt", data, 0644)
 }
 
@@ -880,9 +899,16 @@ func (p *ProfileTest) pingLink(index int, link string) (int64, error) {
 		link = p.Links[index]
 	}
 	p.WriteMessage(getMsgByte(index, "startping"))
-	elapse, err := request.PingLink(link, 2)
+	elapse, err := p.ping(link)
 	p.WriteMessage(getMsgByte(index, "gotping", elapse))
 	if elapse < 1 {
+		// 代理节点 ping 不通 = 节点不可用,没必要再测速。
+		// 直连则相反:延迟只是附加信息(端点可能拒绝探测请求却完全能正常下载),
+		// 带宽才是这次测试的目的 —— ping 记 0 继续跑,不要连带废掉整场测速。
+		if config.IsDirectLink(link) && p.Options.SpeedTestMode != PingOnly {
+			slog.Debug("direct ping failed, continuing with speed test", "err", err)
+			return 0, nil
+		}
 		p.WriteMessage(getMsgByte(index, "gotspeed", -1, -1, 0))
 		return 0, err
 	}
@@ -891,6 +917,19 @@ func (p *ProfileTest) pingLink(index int, link string) (int64, error) {
 		return elapse, errors.New(PingOnly)
 	}
 	return elapse, err
+}
+
+// ping 按链接类型选择延迟探测方式:
+//   - 代理节点:打固定探测站 clients3.google.com/generate_204,测的是「这条代理通不通」;
+//   - 直连(direct://):没有代理可达性可言,且该探测站在不少网络下直连不可达,失败会
+//     连带跳过整个测速。改测到本次下载端点的 TCP 建连延迟 —— 既必然可达(端点本来就要
+//     用它测速),也正是带宽测速工具该展示的 latency。
+func (p *ProfileTest) ping(link string) (int64, error) {
+	if config.IsDirectLink(link) {
+		endpoint := download.GetDownloadURL(p.Options.DownloadSize, p.Options.DownloadURL)
+		return request.PingLinkEndpoint(link, endpoint, p.requestHeaders(p.Options.DownloadSize, true))
+	}
+	return request.PingLink(link, 2)
 }
 
 func FormatDuration(duration time.Duration) string {

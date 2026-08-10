@@ -78,7 +78,10 @@ func gotserversMsg(startID int, links []string, groups []string) []byte {
 				msg.Group = groups[i]
 			}
 			msg.Remarks = cfg.Remarks
-			msg.Server = net.JoinHostPort(cfg.Server, strconv.Itoa(cfg.Port))
+			// 直连(direct://)没有服务器地址,留空,避免显示成 ":0"。
+			if cfg.Server != "" {
+				msg.Server = net.JoinHostPort(cfg.Server, strconv.Itoa(cfg.Port))
+			}
 			msg.Protocol = cfg.Protocol
 			if (cfg.Protocol == "vmess" || cfg.Protocol == "trojan") && cfg.Net != "" {
 				msg.Protocol = fmt.Sprintf("%s/%s", cfg.Protocol, cfg.Net)

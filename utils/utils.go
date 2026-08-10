@@ -14,9 +14,18 @@ import (
 	"github.com/1orz/proxy-speedtest/common"
 )
 
+var (
+	regProxyLink = regexp.MustCompile(`(?i)^(vmess|trojan|vless|ss|ssr|http)://.+`)
+	// direct:// 是「直连(不走代理)」的合成链接,:// 之后允许为空(仅可选的 #备注),
+	// 因此单独匹配,不能套用上面要求 :// 后必须有内容的规则。
+	regDirectLink = regexp.MustCompile(`(?i)^(direct)://`)
+)
+
 func CheckLink(link string) ([]string, error) {
-	r := regexp.MustCompile("(?i)^(vmess|trojan|vless|ss|ssr|http)://.+")
-	matches := r.FindStringSubmatch(link)
+	if matches := regDirectLink.FindStringSubmatch(link); len(matches) >= 2 {
+		return matches, nil
+	}
+	matches := regProxyLink.FindStringSubmatch(link)
 	if len(matches) < 2 {
 		return nil, common.NewError("Not Suported Link")
 	}

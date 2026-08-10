@@ -97,3 +97,29 @@ func TestBuildConfigServerNamePreserved(t *testing.T) {
 		t.Fatalf("生成的配置缺少 serverName,标准校验无法进行:\n%s", jsonConfig)
 	}
 }
+
+// TestBuildConfigDirect 验证「直连」协议生成的是 freedom 出站,且能被 xray-core 接受 ——
+// 这是「不填订阅、只测本机上下行带宽」这条路径的地基:direct:// 必须能真的拨出去。
+func TestBuildConfigDirect(t *testing.T) {
+	cfg := &ProxyConfig{Protocol: ProtocolDirect, Tag: "Direct"}
+
+	jsonConfig, err := buildJSONConfig(cfg)
+	if err != nil {
+		t.Fatalf("buildJSONConfig 失败: %v", err)
+	}
+	if !strings.Contains(string(jsonConfig), `"protocol":"freedom"`) {
+		t.Fatalf("直连出站不是 freedom:\n%s", jsonConfig)
+	}
+	if _, err := core.LoadConfig("json", bytes.NewReader(jsonConfig)); err != nil {
+		t.Fatalf("core.LoadConfig 拒绝了直连配置: %v", err)
+	}
+
+	// 端到端:实例能起来,拨号器可用(不发起真实连接)。
+	dialer, err := NewDialer(cfg)
+	if err != nil {
+		t.Fatalf("NewDialer 失败: %v", err)
+	}
+	if err := dialer.Close(); err != nil {
+		t.Fatalf("Close 失败: %v", err)
+	}
+}

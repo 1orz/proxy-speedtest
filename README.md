@@ -9,6 +9,8 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 - Support Clash configuration files
 - Support multiple transport protocols: TCP, WebSocket, gRPC, SplitHTTP/XHTTP, HTTP Upgrade
 - Support TLS and Reality security
+- Works without any subscription too: leave it empty (or pass `-direct`) for a plain
+  download/upload bandwidth test of the machine itself
 
 ![build](https://github.com/1orz/proxy-speedtest/actions/workflows/ci.yaml/badge.svg?branch=master&event=push)
 
@@ -18,10 +20,10 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 
 - **No subscription/link argument → web mode.** Starts the web UI (default `http://127.0.0.1:10888/`).
   Per-second download/upload samples are sent to both the browser and the server's stderr.
-- **A subscription link, a share link (`vmess://` / `vless://` / `trojan://` / `ss://` …), or a local
-  file → CLI mode.** Runs the speed test directly and prints/saves the result. Live progress goes to
-  **stderr** with one download/upload sample per second; the result data goes to **stdout** (so it
-  pipes cleanly).
+- **A subscription link, a share link (`vmess://` / `vless://` / `trojan://` / `ss://` …), a local
+  file, or `-direct` → CLI mode.** Runs the speed test directly and prints/saves the result. Live
+  progress goes to **stderr** with one download/upload sample per second; the result data goes to
+  **stdout** (so it pipes cleanly).
 
 ```bash
 # web mode: open http://127.0.0.1:10888/ in your browser
@@ -30,6 +32,10 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 
 # CLI mode: subscription (JSON to stdout by default)
 ./proxy-speedtest --test https://example.com/subscription
+
+# direct mode: no subscription at all — just this machine's own download/upload speed
+./proxy-speedtest -direct
+./proxy-speedtest -direct --upload --threads 4 --output table
 
 # CLI mode: a single share link, directly (flags may go before or after the link)
 ./proxy-speedtest "vmess://..."
@@ -69,6 +75,40 @@ LiteSpeedTest is a simple tool for batch testing proxy servers.
 ./proxy-speedtest --config config.json --test https://sub
 ```
 
+### Direct mode (no subscription)
+
+A subscription is optional. With none, the tool degrades into a plain bandwidth tester for the
+machine it runs on — no proxy anywhere in the path. Only the **download endpoint is required**
+(a preset is selected by default, so it always has a value); **upload** and **request headers**
+stay optional.
+
+- **Web UI:** just leave the subscription list empty and press *Start Direct Test*. Uploading a
+  config file or filling in any subscription switches back to proxy testing.
+- **CLI:** `-direct`. It is ignored when `-test` or a positional share link is given.
+
+```bash
+./proxy-speedtest -direct                                     # download only, Cloudflare preset
+./proxy-speedtest -direct --upload --output table             # download + upload
+./proxy-speedtest -direct --download-size hetzner-de --threads 8
+./proxy-speedtest -direct \
+  --download-url "https://speed.example.com/__down?bytes=524288000" \
+  --upload --upload-url "https://speed.example.com/__up" \
+  -H "X-Speedtest-Key: shared-secret"
+```
+
+Internally this is one synthetic node, `direct://` (accepted anywhere a share link is — including
+the subscription box, so a direct row can be mixed into a normal run as a baseline). Two behaviours
+differ from proxy nodes:
+
+- **Ping** measures the HTTP round trip to the *download endpoint* rather than probing
+  `clients3.google.com/generate_204` — there is no proxy reachability to establish, and that probe
+  is unreachable on plenty of networks.
+- A failed ping does **not** cancel the speed test: bandwidth is the point of the run, and some
+  endpoints refuse probe requests while serving downloads perfectly.
+
+`direct://` rows are excluded from the `text` output and from *Copy working nodes*, since they are
+not importable proxies.
+
 ### Output formats
 
 `-output` (alias `-o`) takes a **comma-separated list** of formats: `json`, `csv`, `text`, `table`,
@@ -101,6 +141,7 @@ avg_upload_bytes_per_sec, max_upload_bytes_per_sec, traffic_bytes, success, link
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-test` | | Subscription URL or file path to test |
+| `-direct` | false | Test without any proxy or subscription: measure this machine's own download/upload speed |
 | `-timeout` | 16 | Timeout for each node test (seconds) |
 | `-concurrency` | 2 | Number of concurrent tests |
 | `-output`, `-o` | json | Output formats (comma-separated): json, csv, text, table, pic, none |
@@ -133,6 +174,7 @@ avg_upload_bytes_per_sec, max_upload_bytes_per_sec, traffic_bytes, success, link
     "concurrency": 1,            // concurrency number
     "testMode": 2,               // 2: ALLTEST 3: RETEST
     "subscription": "subscription url",
+    "directMode": false,         // true: no proxy at all, test this machine's own bandwidth
     "timeout": 16,               // timeout in seconds
     "language": "en",            // en cn
     "fontSize": 24,

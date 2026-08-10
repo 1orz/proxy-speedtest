@@ -18,6 +18,15 @@ type Config struct {
 	SNI      string
 }
 
+// DirectLink 是「直连(不走代理)」的合成链接:没有订阅/节点时用它跑一次纯本机
+// 上传/下载带宽测试。详见 parser.DirectLink。
+const DirectLink = parser.DirectLink
+
+// IsDirectLink 判断一段文本是否为直连链接。
+func IsDirectLink(link string) bool {
+	return parser.IsDirectLink(link)
+}
+
 // Link2Config parses a proxy link and returns a simplified config
 func Link2Config(link string) (*Config, error) {
 	proxyConfig, err := parser.ParseLink(link)

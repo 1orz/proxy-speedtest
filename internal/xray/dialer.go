@@ -164,6 +164,11 @@ func buildOutboundJSON(config *ProxyConfig) (map[string]interface{}, error) {
 	case ProtocolSOCKS:
 		outbound["protocol"] = "socks"
 		outbound["settings"] = buildSOCKSJSON(config)
+	case ProtocolDirect:
+		// 直连:freedom 出站按系统默认路由发包,等价于「不走代理」。走同一条 xray
+		// 拨号路径(而不是另起一个 net.Dialer),超时/取消/统计语义与代理测速完全一致。
+		outbound["protocol"] = "freedom"
+		outbound["settings"] = map[string]interface{}{}
 	default:
 		return nil, fmt.Errorf("unsupported protocol: %s", config.Protocol)
 	}

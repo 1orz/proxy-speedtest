@@ -15,7 +15,7 @@ import (
 )
 
 // 支持的协议正则
-var linkRegex = regexp.MustCompile(`(?i)^(vmess|vless|trojan|ss|shadowsocks|wireguard|wg|http|https|socks5?)://`)
+var linkRegex = regexp.MustCompile(`(?i)^(vmess|vless|trojan|ss|shadowsocks|wireguard|wg|http|https|socks5?|direct)://`)
 
 // Parser interface for parsing proxy links
 type Parser interface {
@@ -27,6 +27,7 @@ type Parser interface {
 
 // 注册所有解析器
 var parsers = []Parser{
+	&Direct{},
 	&VMess{},
 	&VLESS{},
 	&Trojan{},

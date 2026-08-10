@@ -13,6 +13,9 @@ const (
 	ProtocolWireGuard   Protocol = "wireguard"
 	ProtocolHTTP        Protocol = "http"
 	ProtocolSOCKS       Protocol = "socks"
+	// ProtocolDirect 表示「不经代理的直连」,映射到 xray 的 freedom 出站。
+	// 用于无订阅的本机上传/下载带宽测试(见 parser.DirectLink)。
+	ProtocolDirect Protocol = "direct"
 )
 
 // ProxyConfig represents unified proxy configuration

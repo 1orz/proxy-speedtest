@@ -134,13 +134,14 @@ export function TestForm() {
     setOptions({ subscriptions: next.length > 0 ? next : [{ group: '', url: '' }] })
   }, [options.subscriptions, setOptions])
 
+  // 一条订阅都没填、也没上传文件 → 直连测速:不走代理,只测本机的下载/上传。
+  // 此时下载端点(预设或自定义 URL)就是唯一必填项,上传与请求头仍是可选。
+  const directMode = !uploadedFile && options.subscriptions.every((e) => !e.url.trim())
+
   const handleSubmit = useCallback(() => {
     // 有效订阅条目(URL 非空);上传文件视为一条原始内容订阅
     const entries = options.subscriptions.filter((e) => e.url.trim())
-    if (!uploadedFile && entries.length === 0) {
-      alert(t('form.alert.noSub'))
-      return
-    }
+    const isDirect = !uploadedFile && entries.length === 0
     if (options.downloadSize === 'custom' && !options.downloadUrl.trim()) {
       alert(t('form.alert.noCustomUrl'))
       return
@@ -151,9 +152,11 @@ export function TestForm() {
     // 本次是否测上传、以及测试模式在开始时即快照,让结果展示不受之后表单改动影响
     useTestStore.setState({ loading: true, runUploadEnabled: uploadEnable, runMode: options.speedtestMode })
 
-    const subscriptions = uploadedFile
-      ? [{ group: '', subscription: fileContent }]
-      : entries.map((e) => ({ group: e.group.trim(), subscription: e.url.trim() }))
+    const subscriptions = isDirect
+      ? []
+      : uploadedFile
+        ? [{ group: '', subscription: fileContent }]
+        : entries.map((e) => ({ group: e.group.trim(), subscription: e.url.trim() }))
 
     // 自定义请求头:统一模式下上传复用下载那份;非统一分别取。名称为空的行忽略。
     const trimHeaders = (arr: HeaderEntry[]) =>
@@ -163,6 +166,7 @@ export function TestForm() {
 
     const payload = JSON.stringify({
       testMode: 2,
+      directMode: isDirect,
       subscriptions,
       speedtestMode: options.speedtestMode,
       sortMethod: options.sortMethod,
@@ -277,6 +281,9 @@ export function TestForm() {
               <Plus className="w-4 h-4" />
               {t('form.addSub')}
             </Button>
+            {directMode && (
+              <p className="text-xs text-primary">{t('form.direct.hint')}</p>
+            )}
           </div>
 
           {/* 文件上传区域 */}
@@ -582,6 +589,7 @@ export function TestForm() {
           <div className="md:col-span-2">
             <ActionButtons
               loading={loading}
+              directMode={directMode}
               onSubmit={handleSubmit}
               onTerminate={handleTerminate}
             />
@@ -749,11 +757,12 @@ function NumberField({
 
 interface ActionButtonsProps {
   loading: boolean
+  directMode: boolean
   onSubmit: () => void
   onTerminate: () => void
 }
 
-function ActionButtons({ loading, onSubmit, onTerminate }: ActionButtonsProps) {
+function ActionButtons({ loading, directMode, onSubmit, onTerminate }: ActionButtonsProps) {
   const t = useI18n()
   return (
     <div className="flex gap-3 pt-2">
@@ -775,7 +784,7 @@ function ActionButtons({ loading, onSubmit, onTerminate }: ActionButtonsProps) {
         ) : (
           <>
             <Play className="w-4 h-4" />
-            {t('form.start')}
+            {directMode ? t('form.start.direct') : t('form.start')}
           </>
         )}
       </Button>

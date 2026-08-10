@@ -88,6 +88,12 @@ export function ResultCard() {
   // "测速中" 占位串在设置时按当时语言写入;切换语言后要能跨语言识别,故比对两种语言的值。
   const isTestingPlaceholder = useCallback((s: string) => s === tt('en', 'status.testing') || s === tt('cn', 'status.testing'), [])
 
+  // 服务器列:直连测速没有服务器地址,标成「本机」;其余按隐私开关脱敏。
+  const serverText = useCallback((n: TestNode) => {
+    if (n.protocol === 'direct') return t('node.direct.server')
+    return privacy ? maskSensitive(n.server) : n.server
+  }, [t, privacy])
+
   // 单元格显示语义(屏幕表格与导出 SVG 共用):待测/测速中/超时/失败(完全失败)/0B/s(能用但没速度)/有效速度。
   const pingDisplay = useCallback((n: TestNode): Cell => {
     if (typeof n.ping === 'string') return { text: t('status.testing'), tone: 'muted' } // 测速中(用当前语言)
@@ -137,7 +143,7 @@ export function ResultCard() {
       },
       {
         id: 'server', accessorKey: 'server', header: t('col.server'), size: 180, enableSorting: false,
-        cell: ({ row }) => <div className="text-muted-foreground font-mono text-xs truncate">{privacy ? maskSensitive(row.original.server) : row.original.server}</div>,
+        cell: ({ row }) => <div className="text-muted-foreground font-mono text-xs truncate">{serverText(row.original)}</div>,
       },
       {
         id: 'protocol', accessorKey: 'protocol', header: t('col.protocol'), size: 110,
@@ -168,7 +174,7 @@ export function ResultCard() {
       })
     }
     return cols
-  }, [t, privacy, hasUpload, pingDisplay, speedDisplay, speedCellEl])
+  }, [t, hasUpload, serverText, pingDisplay, speedDisplay, speedCellEl])
 
   // group 列默认隐藏(多订阅时才有意义);其余默认显示。用户勾选写回持久化。
   const effectiveVisibility = useMemo(() => ({ group: false, ...columnVisibility }), [columnVisibility])
@@ -216,7 +222,7 @@ export function ResultCard() {
       rows: nodes.map((n) => ({
         group: n.group || '',
         name: n.remark || '-',
-        server: privacy ? maskSensitive(n.server) : n.server,
+        server: serverText(n),
         protocol: n.protocol || '-',
         ping: pingDisplay(n),
         download: speedDisplay(n.speed, n),
@@ -225,7 +231,7 @@ export function ResultCard() {
       footer: `Powered by LiteSpeedTest ${version} · ${ts}`,
     }
     return buildShareSvg(input)
-  }, [table, colLabel, ipv4, ipv6, ipv4geo, ipv6geo, privacy, options.appearance, theme, version, t, result.length, testOkCount, totalTraffic, totalTime, pingDisplay, speedDisplay])
+  }, [table, colLabel, ipv4, ipv6, ipv4geo, ipv6geo, privacy, serverText, options.appearance, theme, version, t, result.length, testOkCount, totalTraffic, totalTime, pingDisplay, speedDisplay])
 
   const fileBase = () => `speedtest_result_${Date.now()}`
 
@@ -271,8 +277,12 @@ export function ResultCard() {
     }
   }
 
+  // 直连行的 link 是内部合成的 direct://,不是可导入的节点,复制时跳过。
   const handleCopyAvailable = useCallback(async () => {
-    const links = result.filter((n) => typeof n.ping === 'number' && n.ping > 0).map((n) => n.link).join('\n')
+    const links = result
+      .filter((n) => n.protocol !== 'direct' && typeof n.ping === 'number' && n.ping > 0)
+      .map((n) => n.link)
+      .join('\n')
     await copyToClipboard(links)
     alert(t('table.copiedAvailable'))
   }, [t, result])

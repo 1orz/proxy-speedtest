@@ -49,10 +49,11 @@ const en = {
   'form.header.namePh': 'Header name (e.g. X-Speedtest-Key)',
   'form.header.valuePh': 'Value',
   'form.addHeader': 'Add header',
-  'form.alert.noSub': 'Enter a subscription link or upload a config file',
   'form.alert.noCustomUrl': 'You selected “Custom URL” — please enter a download link',
   'form.alert.connectFail': 'Failed to connect to the test service, please retry',
+  'form.direct.hint': 'No subscription — a direct test will run: no proxy at all, just this machine’s own download / upload speed against the endpoints below.',
   'form.start': 'Start Test',
+  'form.start.direct': 'Start Direct Test',
   'form.testing': 'Testing...',
   'form.terminate': 'Stop',
 
@@ -66,6 +67,7 @@ const en = {
   'dash.protocols': 'Protocols',
 
   // ResultTable
+  'node.direct.server': 'Local (no proxy)',
   'col.group': 'Group',
   'col.remark': 'Node',
   'col.server': 'Server',
@@ -175,10 +177,11 @@ const cn: Record<TKey, string> = {
   'form.header.namePh': '请求头名称(如 X-Speedtest-Key)',
   'form.header.valuePh': '值',
   'form.addHeader': '添加请求头',
-  'form.alert.noSub': '请输入订阅链接或上传配置文件',
   'form.alert.noCustomUrl': '已选择“自定义 URL”，请填写测速下载直链',
   'form.alert.connectFail': '连接测速服务失败，请重试',
+  'form.direct.hint': '未填写订阅 —— 将执行「直连测速」：完全不走代理，只用下方端点测本机自身的下载 / 上传速度。',
   'form.start': '开始测速',
+  'form.start.direct': '开始直连测速',
   'form.testing': '测速中...',
   'form.terminate': '终止',
 
@@ -190,6 +193,7 @@ const cn: Record<TKey, string> = {
   'dash.duration': '测试耗时',
   'dash.protocols': '协议统计',
 
+  'node.direct.server': '本机（不走代理）',
   'col.group': '组名',
   'col.remark': '节点名称',
   'col.server': '服务器',

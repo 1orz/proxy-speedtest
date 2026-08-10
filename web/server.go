@@ -420,6 +420,14 @@ func TestFromCMD(subscription string, configPath *string, cmdOpts *CMDOptions) e
 		slog.Debug("cmd options", "json", string(jsonOpt))
 	}
 
+	// 直连测速:-direct 会把订阅设成 direct://;配置文件里的 directMode 在没显式给订阅时
+	// 同样生效。两者归一到「订阅就是一条 direct:// 链接」,后面完全走同一条流水线。
+	if config.IsDirectLink(options.Subscription) {
+		options.DirectMode = true
+	} else if options.DirectMode && strings.TrimSpace(subscription) == "" {
+		options.Subscription = config.DirectLink
+	}
+
 	links, err := ParseLinks(options.Subscription)
 	if err != nil {
 		return err

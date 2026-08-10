@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	grpcServer "github.com/1orz/proxy-speedtest/api/rpc/liteserver"
+	"github.com/1orz/proxy-speedtest/config"
 	C "github.com/1orz/proxy-speedtest/constant"
 	"github.com/1orz/proxy-speedtest/log"
 	"github.com/1orz/proxy-speedtest/utils"
@@ -62,6 +63,7 @@ var (
 	port            = flag.Int("p", 8090, "set port")
 	bind            = flag.String("bind", "", "bind web server to an address or interface name, e.g. 100.x.x.x or tailscale0 (empty = all interfaces)")
 	test            = flag.String("test", "", "test from command line with subscription link or file")
+	direct          = flag.Bool("direct", false, "direct speed test without any proxy: no subscription needed, measures this machine's own download/upload speed")
 	conf            = flag.String("config", "", "config file path (JSON format)")
 	grpc            = flag.Bool("grpc", false, "start grpc server")
 	version         = flag.Bool("v", false, "show current version")
@@ -149,6 +151,17 @@ func main() {
 		cmdOpts := commandOptions()
 		if err := webServer.TestFromCMD(*test, conf, cmdOpts); err != nil {
 			fatal("command-line test failed", err)
+		}
+		return
+	}
+
+	// 直连测速:不需要订阅/节点,合成一条 direct:// 走同一条 CLI 流水线,
+	// 只测本机的下载(必填,默认 Cloudflare 端点)与可选的上传。
+	// 已经给了 -test 或位置参数链接时以后者为准,-direct 忽略。
+	if *direct && *test == "" && link == "" {
+		cmdOpts := commandOptions()
+		if err := webServer.TestFromCMD(config.DirectLink, conf, cmdOpts); err != nil {
+			fatal("direct test failed", err)
 		}
 		return
 	}

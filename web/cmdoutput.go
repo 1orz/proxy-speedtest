@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/1orz/proxy-speedtest/config"
 	"github.com/1orz/proxy-speedtest/download"
 	"github.com/1orz/proxy-speedtest/web/render"
 )
@@ -180,15 +181,24 @@ func renderCSVBytes(summary TestSummary) ([]byte, error) {
 	return buf.Bytes(), w.Error()
 }
 
-// renderTextBytes 输出测通节点的分享链接(每行一条,可当订阅导入)。
-func renderTextBytes(summary TestSummary) []byte {
+// workingLinks 返回测通节点的分享链接。direct:// 是本工具内部的合成链接、不是可导入的
+// 节点,直接跳过,保证 text 输出始终是一份能当订阅用的链接列表。
+func workingLinks(nodes render.Nodes) []string {
 	var links []string
-	for _, n := range summary.Nodes {
+	for _, n := range nodes {
+		if config.IsDirectLink(n.Link) {
+			continue
+		}
 		if n.Ping != "0" || n.AvgSpeed > 0 || n.MaxSpeed > 0 {
 			links = append(links, n.Link)
 		}
 	}
-	return []byte(strings.Join(links, "\n"))
+	return links
+}
+
+// renderTextBytes 输出测通节点的分享链接(每行一条,可当订阅导入)。
+func renderTextBytes(summary TestSummary) []byte {
+	return []byte(strings.Join(workingLinks(summary.Nodes), "\n"))
 }
 
 // renderJSONBytes 输出与 web JSONOutput 一致的缩进 JSON。
