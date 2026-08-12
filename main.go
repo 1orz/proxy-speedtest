@@ -76,7 +76,7 @@ var (
 	downloadSize    = flag.String("download-size", "", "download endpoint preset key (cloudflare, hetzner-de, hetzner-us, linode-jp, vultr-sg, ovh-eu, datapacket-us, huawei-cn, worker)")
 	upload          optionalBool
 	uploadURL       = flag.String("upload-url", "", "custom upload URL (HTTP POST sink) for speed test")
-	uploadSize      = flag.String("upload-size", "", "upload endpoint preset key (cloudflare, dlptest, worker)")
+	uploadSize      = flag.String("upload-size", "", "upload endpoint preset key (cloudflare, dlptest, worker, cdn); cdn = self-hosted object-storage gateway (PUT), pass its auth via -uH \"x-upload-key: ...\"")
 	allHeaders      headerFlags
 	downloadHeaders headerFlags
 	uploadHeaders   headerFlags

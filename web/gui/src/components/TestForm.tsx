@@ -40,10 +40,20 @@ const WORKER_UP_URL = 'https://cf-sp.orbitintel.com/__up'
 
 // 上传测速端点(POST 接收即丢弃)。key 必须与后端 download.GetUploadURL 的 case 一致。
 // 可用的公共 sink 稀缺:CF __up 为 Anycast 就近、首选;DLPTest 为美国固定备选。
+// 自建对象存储网关:PUT {base}/{bucket}/{key},鉴权头 x-upload-key 由用户在
+// 「自定义请求头」里填(和 worker 预设填 X-Speedtest-Key 一样)。
+// key 名须与后端 download.UploadCDN 一致,URL 须与 download.CDNUpDefault 一致。
+const CDN_UPLOAD_PRESET = 'cdn'
+const CDN_UP_URL = 'https://oassets.orbitfin.ai/filing-reports/speedtest-probe.bin'
+
+// 常用鉴权头的一键添加。只预置**头名**,值一律由用户自己填 —— 密钥不进代码。
+const HEADER_PRESETS = ['x-upload-key', 'X-Speedtest-Key'] as const
+
 const UPLOAD_ENDPOINTS = [
   { key: 'cloudflare', label: { en: 'Cloudflare __up (Global Anycast · nearest, preferred)', cn: 'Cloudflare __up（全球 Anycast · 就近,首选）' }, url: 'https://speed.cloudflare.com/__up' },
   { key: 'dlptest', label: { en: 'DLPTest (USA, fallback)', cn: 'DLPTest（美国,备选）' }, url: 'https://dlptest.com/api/http-post/' },
   { key: 'worker', label: { en: 'Cloudflare Worker (self-hosted · needs key)', cn: 'Cloudflare Worker（自建 · 需 Key）' }, url: WORKER_UP_URL },
+  { key: CDN_UPLOAD_PRESET, label: { en: 'Object storage gateway (PUT · self-hosted · needs key)', cn: '自建对象存储网关（PUT · 自建 · 需 Key）' }, url: CDN_UP_URL },
 ] as const
 
 // 并发数 / 下载线程数改为离散滑动块的档位
@@ -492,8 +502,12 @@ export function TestForm() {
                 <Select
                   value={options.uploadSize}
                   onValueChange={(v) => {
+                    // 自建端点(worker / 对象存储网关)预填默认地址,用户可直接改;
+                    // 公共 sink 则清空,走后端的预设映射。
                     if (v === 'worker') {
                       setOptions({ uploadSize: 'worker', uploadUrl: WORKER_UP_URL })
+                    } else if (v === CDN_UPLOAD_PRESET) {
+                      setOptions({ uploadSize: CDN_UPLOAD_PRESET, uploadUrl: CDN_UP_URL })
                     } else {
                       setOptions({ uploadSize: v, uploadUrl: '' })
                     }
@@ -511,7 +525,18 @@ export function TestForm() {
                     ))}
                   </SelectContent>
                 </Select>
-                {options.uploadSize === 'worker' ? (
+                {options.uploadSize === CDN_UPLOAD_PRESET ? (
+                  <>
+                    <Input
+                      value={options.uploadUrl}
+                      onChange={(e) => setOptions({ uploadUrl: e.target.value })}
+                      placeholder={CDN_UP_URL}
+                      disabled={loading}
+                      className="font-mono text-xs"
+                    />
+                    <p className="text-xs text-warning">{t('form.cdnUpload.note')}</p>
+                  </>
+                ) : options.uploadSize === 'worker' ? (
                   <>
                     <Input
                       value={options.uploadUrl}
@@ -675,6 +700,18 @@ function HeaderList({
     onChange(entries.map((h, idx) => (idx === i ? { ...h, ...patch } : h)))
   const add = () => onChange([...entries, { name: '', value: '' }])
   const remove = (i: number) => onChange(entries.filter((_, idx) => idx !== i))
+  // 一键加一行预设头名。已经有同名行(按 HTTP 语义忽略大小写)时不再重复添加,
+  // 而是把该行的名字规范成预设写法,免得出现 x-upload-key / X-Upload-Key 两行打架。
+  const has = (name: string) => entries.some((h) => h.name.trim().toLowerCase() === name.toLowerCase())
+  const addPreset = (name: string) => {
+    if (has(name)) return
+    const blank = entries.findIndex((h) => !h.name.trim() && !h.value.trim())
+    if (blank >= 0) {
+      onChange(entries.map((h, idx) => (idx === blank ? { ...h, name } : h)))
+      return
+    }
+    onChange([...entries, { name, value: '' }])
+  }
   return (
     <div className="space-y-2">
       {entries.map((h, i) => (
@@ -698,10 +735,28 @@ function HeaderList({
           </Button>
         </div>
       ))}
-      <Button type="button" variant="outline" size="sm" onClick={add} disabled={disabled} className="gap-2">
-        <Plus className="w-4 h-4" />
-        {t('form.addHeader')}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={add} disabled={disabled} className="gap-2">
+          <Plus className="w-4 h-4" />
+          {t('form.addHeader')}
+        </Button>
+        <span className="text-xs text-muted-foreground">{t('form.headers.quickAdd')}</span>
+        {HEADER_PRESETS.map((name) => (
+          <Button
+            key={name}
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => addPreset(name)}
+            disabled={disabled || has(name)}
+            className="gap-1 font-mono text-xs"
+            title={t('form.headers.quickAdd')}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            {name}
+          </Button>
+        ))}
+      </div>
     </div>
   )
 }

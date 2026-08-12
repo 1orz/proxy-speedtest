@@ -790,9 +790,10 @@ func (p *ProfileTest) testOne(ctx context.Context, index int, link string, nodeC
 		p.WriteMessage(getMsgByte(index, "startupload"))
 		uploadURL := download.GetUploadURL(p.Options.UploadSize, p.Options.UploadURL)
 		upHeaders := p.requestHeaders(p.Options.UploadSize, false)
+		upProfile := download.GetUploadProfile(p.Options.UploadSize)
 		uAvg, uMax, _ = p.runSpeedPhase(ctx, index, remarks, "gotupload", trafficChan,
 			func(runCtx context.Context, ch chan<- int64, startCh chan<- time.Time) (int64, error) {
-				return download.UploadWithURLThreads(runCtx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, uploadURL, p.Options.Threads, upHeaders)
+				return download.UploadWithURLThreads(runCtx, link, p.Options.Timeout, p.Options.Timeout, ch, startCh, uploadURL, p.Options.Threads, upHeaders, upProfile)
 			})
 	}
 
@@ -858,9 +859,14 @@ func (p *ProfileTest) runSpeedPhase(ctx context.Context, index int, remarks, msg
 			}
 		}
 	}()
-	speed, _ := run(ctx, ch, startCh)
+	speed, err := run(ctx, ch, startCh)
 	close(ch)
 	<-done
+	if err != nil {
+		// 端点未配置 / 拨号器建不起来这类「一开始就跑不动」的错误,原本被完全吞掉,
+		// 界面上只剩一个 N/A 无从排查。记一条日志,至少 -log-level debug 能看到原因。
+		slog.Debug("speed phase failed", "index", index, "remarks", remarks, "dir", msgType, "err", err)
+	}
 	if speed < 1 {
 		p.WriteMessage(getMsgByte(index, msgType, -1, -1, 0))
 	}

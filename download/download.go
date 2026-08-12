@@ -2,6 +2,8 @@ package download
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -43,6 +45,46 @@ const (
 	WorkerDownDefault = "https://cf-sp.orbitintel.com/__down?bytes=524288000"
 	WorkerUpDefault   = "https://cf-sp.orbitintel.com/__up"
 )
+
+// 自建对象存储网关(S3 兼容)的上传端点。与丢弃型 sink 不同,它是真的把对象写进桶里:
+//
+//	PUT {base}/{bucket}/{key}
+//	  x-upload-key:          鉴权(用户在「自定义请求头」里填,不预置在代码里)
+//	  x-amz-content-sha256:  请求体的 sha256
+//	  x-amz-acl:             bucket-owner-full-control
+//	  Content-Type:          application/octet-stream
+//
+// URL 与其它预设一样可在前端改;测速会把同一个 key 反复覆盖写,建议指向一个专用的
+// 临时路径并配上生命周期规则。
+const (
+	// UploadCDN 是该端点的预设 key,需与前端 UPLOAD_ENDPOINTS 保持一致。
+	UploadCDN = "cdn"
+
+	// UploadKeyHeader 是网关的鉴权头名。key 的值由用户自己填,这里只固定头名。
+	UploadKeyHeader = "x-upload-key"
+
+	// CDNUpDefault 是预置的默认上传地址(前端 CDN_UP_URL 与之保持一致)。
+	CDNUpDefault = "https://oassets.orbitfin.ai/filing-reports/speedtest-probe.bin"
+
+	uploadACL = "bucket-owner-full-control"
+)
+
+// UploadProfile 描述一个上传端点的调用约定。丢弃型 sink(Cloudflare __up 等)用
+// POST 即可;S3 兼容网关要 PUT,并且要按对象存储的约定带上内容摘要与 ACL。
+type UploadProfile struct {
+	Method        string // POST / PUT
+	ContentSHA256 bool   // 是否发 x-amz-content-sha256
+	ACL           string // x-amz-acl;空则不发
+	ChunkBytes    int64  // 单次请求的请求体大小;0 = uploadChunkDefault
+}
+
+// GetUploadProfile 按端点 key 返回调用约定。未知 key 一律按丢弃型 sink 处理。
+func GetUploadProfile(size string) UploadProfile {
+	if size == UploadCDN {
+		return UploadProfile{Method: http.MethodPut, ContentSHA256: true, ACL: uploadACL}
+	}
+	return UploadProfile{Method: http.MethodPost}
+}
 
 // GetDownloadURL 把前端/命令行的端点 key 映射到具体下载 URL。key 需与前端
 // DOWNLOAD_ENDPOINTS 保持一致;customURL 非空时优先使用。
@@ -87,6 +129,8 @@ func GetUploadURL(size string, customURL string) string {
 		return DLPTestUpLink
 	case "worker":
 		return WorkerUpDefault
+	case UploadCDN:
+		return CDNUpDefault
 	default:
 		return CloudflareUpLink
 	}
@@ -307,7 +351,40 @@ var zeroBlock = make([]byte, 32*1024)
 // uploadChunkBytes 是单次 POST 上传的固定大小。用固定 Content-Length(而非 chunked)兼容
 // CF __up 与 DLPTest;每块完成后仅在响应 2xx 时才把本次字节计入吞吐,避免坏端点/限流的失败
 // 上传贡献虚假速度、并使死节点(total==0)判定失效(与下载先验状态码再计数对称)。
-const uploadChunkBytes = 4 * 1024 * 1024
+// uploadChunkDefault 是单次请求默认的请求体大小,可被 UploadProfile.ChunkBytes 覆盖。
+//
+// 4MiB 是这个测试里唯一真正的取舍点,别随手调大:
+//   - 调大 → 请求数变少(对象存储按写操作计费时更省),但一块传不完整场测试的慢速链路
+//     会一次都没成功 —— 只有 2xx 才计入吞吐,上传就直接显示 0。1MiB/s 的线路配 32MiB
+//     的块,15 秒测试期内一块都发不完。
+//   - 调小 → 每请求的固定开销(建连之外的 header/响应往返)占比升高,压低测得的吞吐。
+//
+// 4MiB 在 1MiB/s 的慢线上约 4 秒一块(测试时长内能成几块),在 500MiB/s 上约 8ms 一块
+// (开销可忽略),两端都还站得住。
+const uploadChunkDefault int64 = 4 * 1024 * 1024
+
+// uploadDigestCache 缓存「size 个零字节」的 sha256,供 S3 兼容网关的
+// x-amz-content-sha256 使用。请求体内容恒定,按大小算一次即可 —— 否则每块都要重算
+// 一遍摘要,白烧 CPU 还压低吞吐。
+var uploadDigestCache sync.Map // int64 -> string
+
+func uploadBodyDigest(size int64) string {
+	if v, ok := uploadDigestCache.Load(size); ok {
+		return v.(string)
+	}
+	h := sha256.New()
+	for remaining := size; remaining > 0; {
+		n := int64(len(zeroBlock))
+		if n > remaining {
+			n = remaining
+		}
+		h.Write(zeroBlock[:n])
+		remaining -= n
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	uploadDigestCache.Store(size, sum)
+	return sum
+}
 
 // uploadBody 是单次上传请求的 body:被 http.Client 读取时吐出零字节并累加本次的 sent 计数,
 // 发满 remaining 或 ctx 取消后返回 io.EOF。计数发生在 Read(交给 transport)时刻,受 TCP 流控
@@ -340,17 +417,29 @@ func (b *uploadBody) Read(p []byte) (int, error) {
 // UploadWithURLThreads 对称于 DownloadWithURLThreads:threads 个并行 POST 把零字节流上传到
 // uploadURL(接收即丢弃型端点,如 Cloudflare __up),atomic 聚合每秒吞吐,返回峰值每秒速度。
 // ctx 取消会终止全部上传 worker。
-func UploadWithURLThreads(ctx context.Context, link string, timeout time.Duration, handshakeTimeout time.Duration, resultChan chan<- int64, startChan chan<- time.Time, uploadURL string, threads int, headers map[string]string) (int64, error) {
+func UploadWithURLThreads(ctx context.Context, link string, timeout time.Duration, handshakeTimeout time.Duration, resultChan chan<- int64, startChan chan<- time.Time, uploadURL string, threads int, headers map[string]string, profile UploadProfile) (int64, error) {
+	if profile.Method == "" {
+		profile.Method = http.MethodPost
+	}
+	if uploadURL == "" {
+		// 只有丢弃型 sink 才有通用兜底;对象存储网关缺地址必须报错,不能悄悄换成
+		// 公共 sink 让用户以为测的是自己的网关。
+		if profile.Method != http.MethodPost {
+			return 0, fmt.Errorf("upload endpoint is empty: fill in the upload URL for the %q preset", UploadCDN)
+		}
+		uploadURL = CloudflareUpLink
+	}
 	dialer, err := createDialer(link)
 	if err != nil {
 		return 0, err
 	}
 	defer dialer.Close()
-	if uploadURL == "" {
-		uploadURL = CloudflareUpLink
-	}
 	if threads < 1 {
 		threads = 1
+	}
+	chunk := profile.ChunkBytes
+	if chunk <= 0 {
+		chunk = uploadChunkDefault
 	}
 
 	dlCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -367,13 +456,20 @@ func UploadWithURLThreads(ctx context.Context, link string, timeout time.Duratio
 			client := &http.Client{Transport: transport}
 			for dlCtx.Err() == nil {
 				var sent atomic.Int64
-				req, err := http.NewRequestWithContext(dlCtx, "POST", uploadURL, &uploadBody{ctx: dlCtx, sent: &sent, remaining: uploadChunkBytes})
+				req, err := http.NewRequestWithContext(dlCtx, profile.Method, uploadURL, &uploadBody{ctx: dlCtx, sent: &sent, remaining: chunk})
 				if err != nil {
 					return
 				}
-				req.ContentLength = uploadChunkBytes // 固定 Content-Length,避免 chunked 被部分端点拒绝
+				req.ContentLength = chunk // 固定 Content-Length,避免 chunked 被部分端点拒绝
 				req.Header.Set("Content-Type", "application/octet-stream")
 				req.Header.Set("User-Agent", "Mozilla/5.0")
+				// 对象存储网关按 S3 约定校验内容摘要并要求 ACL;丢弃型 sink 不需要。
+				if profile.ContentSHA256 {
+					req.Header.Set("x-amz-content-sha256", uploadBodyDigest(chunk))
+				}
+				if profile.ACL != "" {
+					req.Header.Set("x-amz-acl", profile.ACL)
+				}
 				applyHeaders(req, headers)
 				resp, err := client.Do(req)
 				if err != nil {

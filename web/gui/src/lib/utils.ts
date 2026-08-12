@@ -5,11 +5,20 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// bytesToSize 把字节数格式化成人类可读的量级。
+//
+// 两个下标/取整的坑必须挡住,否则实时表盘会闪出鬼数值 —— 它喂进来的是缓动动画的
+// **浮点**中间值,不是整数:
+//   1) 0 < bytes < 1 时 log 得负数,Math.floor 后 i = -1,sizes[-1] 是 undefined,
+//      于是缓动收敛到 0 的那几帧界面上会出现 "512.0 undefined";
+//   2) i 越过数组末尾(≥1PB,或拿到脏数据)同样是 undefined;
+//   3) B 档直接插值原始浮点,会打印 "123.45678901234567 B"。
 export function bytesToSize(bytes: number): string {
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  if (!bytes || bytes === 0) return '0 B'
-  const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(1024))
-  if (i === 0) return `${bytes} ${sizes[i]}`
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const exp = Math.floor(Math.log(bytes) / Math.log(1024))
+  const i = Math.min(sizes.length - 1, Math.max(0, exp))
+  if (i === 0) return `${Math.round(bytes)} ${sizes[i]}`
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${sizes[i]}`
 }
 

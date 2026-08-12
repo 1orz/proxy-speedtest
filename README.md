@@ -109,6 +109,50 @@ differ from proxy nodes:
 `direct://` rows are excluded from the `text` output and from *Copy working nodes*, since they are
 not importable proxies.
 
+### Upload endpoints
+
+Public "discard sinks" that accept a POST and throw the body away are scarce, so upload testing
+also supports a **self-hosted S3-compatible object-storage gateway** (`-upload-size cdn`). Unlike
+a discard sink it really writes the object, using the gateway contract:
+
+```
+PUT {base}/{bucket}/{key}
+  x-upload-key:         <auth>          ← you supply this as a request header
+  x-amz-content-sha256: <sha256 of the body>
+  x-amz-acl:            bucket-owner-full-control
+  Content-Type:         application/octet-stream
+```
+
+The preset ships with a default URL (`https://oassets.orbitfin.ai/filing-reports/speedtest-probe.bin`)
+that is editable like any other endpoint (web UI field, or `-upload-url`). The auth key is **not**
+baked into the frontend — pass it as a custom request header, exactly like the Cloudflare Worker
+preset's `X-Speedtest-Key`:
+
+- **Web UI:** pick *Object storage gateway*, adjust the URL if needed, then add
+  `x-upload-key` under *Custom Request Headers* — the quick-add buttons there insert the header
+  name for you, you only type the value. (Untick "same headers for download & upload" if the
+  download endpoint shouldn't get it.)
+- **CLI:** `-uH "x-upload-key: …"` (upload only) or `-H` for both directions.
+
+```bash
+./proxy-speedtest -direct --upload --upload-size cdn \
+  -uH "x-upload-key: …" --output table
+
+./proxy-speedtest -direct --upload --upload-size cdn \
+  --upload-url "https://gateway.example.com/my-bucket/speedtest/probe.bin" \
+  -uH "x-upload-key: …"
+```
+
+The test rewrites **the same object** over and over for the whole duration — one PUT per 4 MiB
+(`uploadChunkDefault`, overridable per endpoint via `UploadProfile.ChunkBytes`). Total bytes
+written = duration × achieved throughput, so a 15 s run at 500 MB/s is ~7.5 GB and ~1 900 PUT
+operations. Point it at a throwaway key and add a lifecycle rule if the bucket is versioned.
+
+The 4 MiB chunk is the one real trade-off: larger chunks mean fewer (billed) write operations, but
+a chunk that cannot finish inside the test duration never completes, and only 2xx responses count
+toward throughput — so on a 1 MiB/s link a 32 MiB chunk would report 0 B/s. Smaller chunks make
+per-request overhead eat into the measurement.
+
 ### Output formats
 
 `-output` (alias `-o`) takes a **comma-separated list** of formats: `json`, `csv`, `text`, `table`,
@@ -152,7 +196,7 @@ avg_upload_bytes_per_sec, max_upload_bytes_per_sec, traffic_bytes, success, link
 | `-download-size` | | Download endpoint preset: cloudflare, hetzner-de, hetzner-us, linode-jp, vultr-sg, ovh-eu, datapacket-us, huawei-cn, worker |
 | `-download-url` | | Custom download URL for speed test |
 | `-upload`, `-upload-enable` | false | Also test upload speed after download |
-| `-upload-size` | | Upload endpoint preset: cloudflare, dlptest, worker |
+| `-upload-size` | | Upload endpoint preset: cloudflare, dlptest, worker, cdn |
 | `-upload-url` | | Custom upload URL (HTTP POST sink) |
 | `-H` | | HTTP header for download and upload; repeatable (`Name: Value`) |
 | `-dH` | | Download-only HTTP header; repeatable (`Name: Value`) |

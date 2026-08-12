@@ -4,10 +4,11 @@ import { Download, Upload } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { useTestStore } from '@/store/test-store'
 import { useI18n } from '@/hooks/useI18n'
-import { bytesToSize } from '@/lib/utils'
+import { bytesToSize, cn } from '@/lib/utils'
 
 const MAX_BPS = 125 * 1024 * 1024 // ~1 Gbps 满量程
 const SPARK_LEN = 64
+const SPARK_INTERVAL_MS = 200 // 曲线采样节拍:固定节拍 → 横轴是均匀时间轴(约 12.8s 窗口)
 const START_ANGLE = 225 // 表盘起点(左下 7:30),缺口在底部
 const SWEEP = 270 // 扫过 270°
 // 刻度标签(MB/s),用 sqrt 压缩后的比例定位,呈现 OpenSpeedTest 式非线性刻度感
@@ -31,29 +32,130 @@ function arcPath(cx: number, cy: number, r: number, startAngle: number, endAngle
   return `M ${start.x.toFixed(2)} ${start.y.toFixed(2)} A ${r} ${r} 0 ${largeArc} 0 ${end.x.toFixed(2)} ${end.y.toFixed(2)}`
 }
 
-// rAF 缓动:displayed 平滑逼近 target(样本约 1/秒到达,插值出流畅的数字滚动/指针)
-function useEased(target: number): number {
+// rAF 缓动:displayed 平滑逼近 target(样本约 1/秒到达,插值出流畅的数字滚动/指针)。
+// 返回 [显示值, 最新值的 ref],ref 供固定节拍的曲线采样读取,避免为此再多一次渲染。
+//
+// resetKey 变化(换节点 / 换方向)时立即归零:曲线组件读的就是这个 ref,上一段速率的
+// 衰减尾巴会混进新窗口的首个样本,进而把峰值标签和纵轴量程钉在一个不属于本段的数值上。
+// 归零动作放在 rAF 回调里而不是 effect 体内 —— 后者是同步 setState,会触发级联渲染。
+function useEased(target: number, resetKey: string): [number, { current: number }] {
   const [val, setVal] = useState(0)
   const targetRef = useRef(target)
+  const keyRef = useRef(resetKey)
+  const seenKeyRef = useRef(resetKey)
   const valRef = useRef(0)
-  // 在 effect 里同步 target(而非渲染期写 ref),满足 React 规则;rAF 循环读取最新值
+  const shownRef = useRef(0)
+  // 在 effect 里同步外部输入(而非渲染期写 ref),满足 React 规则;rAF 循环读取最新值
   useEffect(() => {
     targetRef.current = target
   }, [target])
   useEffect(() => {
+    keyRef.current = resetKey
+  }, [resetKey])
+  useEffect(() => {
     let raf = 0
     const tick = () => {
+      if (seenKeyRef.current !== keyRef.current) {
+        seenKeyRef.current = keyRef.current
+        valRef.current = 0
+      }
       const t = targetRef.current
       const cur = valRef.current
-      const next = Math.abs(t - cur) < 1024 ? t : cur + (t - cur) * 0.18
+      // 收敛阈值取 1 字节:到位后不再 setState —— 否则这个 rAF 循环会在整场测速里
+      // 每秒白跑 60 次渲染。比对的是「上次推给 state 的值」,归零后同样能推出去。
+      const next = Math.abs(t - cur) < 1 ? t : cur + (t - cur) * 0.18
       valRef.current = next
-      setVal(next)
+      if (next !== shownRef.current) {
+        shownRef.current = next
+        setVal(next)
+      }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [])
-  return val
+  return [val, valRef]
+}
+
+// Sparkline 是「实时曲线 + 峰值」。它自己按固定节拍采样,并持有采样窗口与纵轴量程;
+// 父组件用 key 重挂来重置,所以这里不需要任何清空逻辑。
+//
+// 为什么是固定节拍:原先「速率值一变就追加一个样本」有两个毛病 —— 连续两秒速率完全
+// 相同时根本不追加,曲线原地卡住;而每多一个点又把已有点在横轴上重新摊开一遍,整条线
+// 看着像被反复压缩。固定节拍 + 定长时间窗(x 从右往左排)把两个问题一起消掉。
+function Sparkline({
+  valueRef,
+  isUp,
+  gradId,
+  fillId,
+  accent,
+}: {
+  valueRef: { current: number }
+  isUp: boolean
+  gradId: string
+  fillId: string
+  accent: string
+}) {
+  const t = useI18n()
+  // samples 与 scale 同一拍更新:纵轴量程若直接取窗口峰值,峰值一滑出窗口整条曲线
+  // 就会突然纵向跳一下;这里「涨立刻跟上、跌缓慢回落」,量程连续变化。
+  const [spark, setSpark] = useState<{ samples: number[]; scale: number }>({ samples: [], scale: 1 })
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setSpark((prev) => {
+        const samples = [...prev.samples.slice(-(SPARK_LEN - 1)), valueRef.current]
+        const target = Math.max(1, ...samples) * 1.12
+        const scale = target > prev.scale ? target : prev.scale + (target - prev.scale) * 0.08
+        return { samples, scale }
+      })
+    }, SPARK_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [valueRef])
+
+  const { samples, scale } = spark
+  const peak = samples.length ? Math.max(...samples) : 0
+
+  // 横轴是定长时间窗:最新的点永远贴右边,老点按固定步距左移;样本不足时曲线从右侧
+  // 长出来,而不是被拉伸铺满整幅。
+  const pts = samples.map((v, i) => ({
+    x: 100 - ((samples.length - 1 - i) / (SPARK_LEN - 1)) * 100,
+    y: 40 - Math.min(1, v / scale) * 36,
+  }))
+  const lineD = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ')
+  const areaD = pts.length > 1 ? `${lineD} L 100 40 L ${pts[0].x.toFixed(2)} 40 Z` : ''
+  const last = pts[pts.length - 1]
+
+  return (
+    <div className="w-full">
+      <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+        <span className={accent}>{isUp ? t('live.upload') : t('live.download')}</span>
+        <span>{t('live.peak')} {bytesToSize(peak)}/s</span>
+      </div>
+      {/* 曲线用 preserveAspectRatio="none" 拉满整幅宽度(横轴是时间,不需要等比)。
+          代价是圆形会被同样拉扁 —— 原来画在 SVG 里的端点圆就成了一颗扁椭圆。
+          所以端点改用下面这个按百分比定位的 DOM 圆点,它不受 viewBox 缩放影响。 */}
+      <div className="relative">
+        <svg width="100%" height="56" viewBox="0 0 100 40" preserveAspectRatio="none" className="block">
+          {/* 基线网格(内敛) */}
+          <line x1="0" y1="20" x2="100" y2="20" stroke="currentColor" strokeWidth={0.4} className="text-muted-foreground/15" vectorEffect="non-scaling-stroke" />
+          {areaD && <path d={areaD} fill={`url(#${fillId})`} stroke="none" />}
+          {pts.length > 1 && (
+            <path d={lineD} fill="none" stroke={`url(#${gradId})`} strokeWidth={2} vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+          )}
+        </svg>
+        {last && pts.length > 1 && (
+          <span
+            className={cn(
+              'pointer-events-none absolute h-2 w-2 rounded-full border-2 bg-background',
+              isUp ? 'border-violet-400' : 'border-cyan-400'
+            )}
+            style={{ left: `${last.x}%`, top: `${(last.y / 40) * 100}%`, transform: 'translate(-50%, -50%)' }}
+          />
+        )}
+      </div>
+    </div>
+  )
 }
 
 export function LiveMeter() {
@@ -71,21 +173,11 @@ export function LiveMeter() {
   const total = result.length
   const progress = total > 0 ? Math.min(100, Math.floor((testCount / total) * 100)) : 0
 
-  const displayed = useEased(current)
-  const frac = speedFraction(displayed)
-
-  // 火花线样本(换节点/换方向时清空;否则追加实时样本)
-  const [samples, setSamples] = useState<number[]>([])
+  // 换节点 / 换方向的标识:曲线组件按它重挂,采样窗口自然清空(比在 effect 里
+  // 同步 setState 清空干净)。
   const dirKey = `${currentTestingId}-${currentDirection}`
-  const prevKeyRef = useRef(dirKey)
-  useEffect(() => {
-    if (prevKeyRef.current !== dirKey) {
-      prevKeyRef.current = dirKey
-      setSamples([current])
-    } else {
-      setSamples((prev) => [...prev.slice(-(SPARK_LEN - 1)), current])
-    }
-  }, [current, dirKey])
+  const [displayed, displayedRef] = useEased(current, dirKey)
+  const frac = speedFraction(displayed)
 
   // 表盘几何
   const size = 300
@@ -101,20 +193,6 @@ export function LiveMeter() {
   const fillId = isUp ? 'liveFillUp' : 'liveFillDown'
   const glowId = 'liveGlow'
   const accent = isUp ? 'text-violet-400' : 'text-cyan-400'
-
-  // 峰值(当前方向本轮)
-  const peak = samples.length ? Math.max(...samples) : 0
-
-  // 实时曲线(面积图):自动缩放到本轮峰值,底部为基线
-  const sparkMax = Math.max(1, peak) * 1.12
-  const pts = samples.map((v, i) => {
-    const x = samples.length > 1 ? (i / (samples.length - 1)) * 100 : 0
-    const y = 40 - Math.min(1, v / sparkMax) * 36
-    return { x, y }
-  })
-  const lineD = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' ')
-  const areaD = pts.length > 1 ? `${lineD} L 100 40 L 0 40 Z` : ''
-  const last = pts[pts.length - 1]
 
   return (
     <motion.div
@@ -221,24 +299,8 @@ export function LiveMeter() {
             </div>
           </div>
 
-          {/* 实时曲线 + 峰值 */}
-          <div className="w-full">
-            <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-              <span className={accent}>{isUp ? t('live.upload') : t('live.download')}</span>
-              <span>{t('live.peak')} {bytesToSize(peak)}/s</span>
-            </div>
-            <svg width="100%" height="56" viewBox="0 0 100 40" preserveAspectRatio="none" className="overflow-visible">
-              {/* 基线网格(内敛) */}
-              <line x1="0" y1="20" x2="100" y2="20" stroke="currentColor" strokeWidth={0.4} className="text-muted-foreground/15" vectorEffect="non-scaling-stroke" />
-              {areaD && <path d={areaD} fill={`url(#${fillId})`} stroke="none" />}
-              {pts.length > 1 && (
-                <path d={lineD} fill="none" stroke={`url(#${gradId})`} strokeWidth={2} vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
-              )}
-              {last && pts.length > 1 && (
-                <circle cx={last.x} cy={last.y} r={2.4} className="fill-background" stroke={`url(#${gradId})`} strokeWidth={1.6} vectorEffect="non-scaling-stroke" />
-              )}
-            </svg>
-          </div>
+          {/* 实时曲线 + 峰值。key=dirKey:换节点/换方向直接重挂,采样窗口自然清零。 */}
+          <Sparkline key={dirKey} valueRef={displayedRef} isUp={isUp} gradId={gradId} fillId={fillId} accent={accent} />
 
           {/* 进度 */}
           <div className="w-full">
