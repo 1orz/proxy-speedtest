@@ -98,8 +98,11 @@ const en = {
   'live.testing': 'Testing:',
   'live.node': 'Node #{id}',
   'live.preparing': 'Preparing…',
+  'live.pinging': 'Pinging',
   'live.downloading': 'Downloading',
   'live.uploading': 'Uploading',
+  'live.total': 'Total throughput',
+  'live.activeNodes': '{n} nodes in parallel',
 
   // ResultImage (client-side vector share card)
   'share.button': 'Export Image',
@@ -225,8 +228,11 @@ const cn: Record<TKey, string> = {
   'live.testing': '正在测速：',
   'live.node': '节点 #{id}',
   'live.preparing': '准备中…',
+  'live.pinging': 'Ping 中',
   'live.downloading': '下载中',
   'live.uploading': '上传中',
+  'live.total': '实时总速率',
+  'live.activeNodes': '{n} 个节点并发中',
 
   'share.button': '导出图片',
   'share.downloadPng': '下载 PNG',

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'motion/react'
-import { Download, Upload } from 'lucide-react'
+import { Activity, Download, Upload } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { useTestStore } from '@/store/test-store'
+import type { LiveNode } from '@/store/test-store'
 import { useI18n } from '@/hooks/useI18n'
 import { bytesToSize, cn } from '@/lib/utils'
 
@@ -13,6 +14,13 @@ const START_ANGLE = 225 // 表盘起点(左下 7:30),缺口在底部
 const SWEEP = 270 // 扫过 270°
 // 刻度标签(MB/s),用 sqrt 压缩后的比例定位,呈现 OpenSpeedTest 式非线性刻度感
 const SCALE_MARKS = [1, 5, 10, 25, 50, 100]
+
+// 并发数超过这个值就不再一节点一表盘,改为只显示一个总速率表盘。
+// 再多的表盘既排不下,也没人看得过来。
+const MAX_GAUGES = 2
+
+// 表盘的展示阶段。idle = 该表盘位暂时没有节点在跑。
+type Phase = 'idle' | LiveNode['phase']
 
 // 速率 → 表盘填充比例。sqrt 压缩,让低速段也有可见变化。
 function speedFraction(bps: number): number {
@@ -77,6 +85,37 @@ function useEased(target: number, resetKey: string): [number, { current: number 
   return [val, valRef]
 }
 
+// GaugeDefs 是所有表盘共用的渐变/滤镜定义。SVG 的 url(#id) 引用在整个文档内解析,
+// 所以只需要渲染一次,多个表盘都能引用到。
+function GaugeDefs() {
+  return (
+    <svg width="0" height="0" className="absolute" aria-hidden>
+      <defs>
+        <linearGradient id="liveGradDown" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#22d3ee" />
+          <stop offset="100%" stopColor="#3b82f6" />
+        </linearGradient>
+        <linearGradient id="liveGradUp" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#a855f7" />
+          <stop offset="100%" stopColor="#ec4899" />
+        </linearGradient>
+        <linearGradient id="liveFillDown" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.45" />
+          <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id="liveFillUp" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#a855f7" stopOpacity="0.45" />
+          <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
+        </linearGradient>
+        <filter id="liveGlow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="4" result="b" />
+          <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+    </svg>
+  )
+}
+
 // Sparkline 是「实时曲线 + 峰值」。它自己按固定节拍采样,并持有采样窗口与纵轴量程;
 // 父组件用 key 重挂来重置,所以这里不需要任何清空逻辑。
 //
@@ -86,12 +125,14 @@ function useEased(target: number, resetKey: string): [number, { current: number 
 function Sparkline({
   valueRef,
   isUp,
+  label,
   gradId,
   fillId,
   accent,
 }: {
   valueRef: { current: number }
   isUp: boolean
+  label: string
   gradId: string
   fillId: string
   accent: string
@@ -129,7 +170,7 @@ function Sparkline({
   return (
     <div className="w-full">
       <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-        <span className={accent}>{isUp ? t('live.upload') : t('live.download')}</span>
+        <span className={accent}>{label}</span>
         <span>{t('live.peak')} {bytesToSize(peak)}/s</span>
       </div>
       {/* 曲线用 preserveAspectRatio="none" 拉满整幅宽度(横轴是时间,不需要等比)。
@@ -158,25 +199,28 @@ function Sparkline({
   )
 }
 
-export function LiveMeter() {
+// Gauge 是一路速率的完整展示:标题行 + 表盘 + 实时曲线。既用于「单个节点」,
+// 也用于并发数较高时的「总速率」——两者的区别只有喂进来的数值和标题。
+function Gauge({
+  title,
+  subtitle,
+  phase,
+  bps,
+  resetKey,
+  compact,
+  footer,
+}: {
+  title: string
+  subtitle?: string
+  phase: Phase
+  bps: number
+  resetKey: string
+  compact?: boolean
+  footer?: React.ReactNode
+}) {
   const t = useI18n()
-  const currentTestingId = useTestStore((s) => s.currentTestingId)
-  const currentDirection = useTestStore((s) => s.currentDirection)
-  const liveDownloadBps = useTestStore((s) => s.liveDownloadBps)
-  const liveUploadBps = useTestStore((s) => s.liveUploadBps)
-  const result = useTestStore((s) => s.result)
-  const testCount = useTestStore((s) => s.testCount)
-
-  const isUp = currentDirection === 'up'
-  const current = isUp ? liveUploadBps : liveDownloadBps
-  const node = result.find((n) => n.id === currentTestingId)
-  const total = result.length
-  const progress = total > 0 ? Math.min(100, Math.floor((testCount / total) * 100)) : 0
-
-  // 换节点 / 换方向的标识:曲线组件按它重挂,采样窗口自然清空(比在 effect 里
-  // 同步 setState 清空干净)。
-  const dirKey = `${currentTestingId}-${currentDirection}`
-  const [displayed, displayedRef] = useEased(current, dirKey)
+  const isUp = phase === 'up'
+  const [displayed, displayedRef] = useEased(bps, resetKey)
   const frac = speedFraction(displayed)
 
   // 表盘几何
@@ -191,8 +235,113 @@ export function LiveMeter() {
 
   const gradId = isUp ? 'liveGradUp' : 'liveGradDown'
   const fillId = isUp ? 'liveFillUp' : 'liveFillDown'
-  const glowId = 'liveGlow'
   const accent = isUp ? 'text-violet-400' : 'text-cyan-400'
+
+  const phaseLabel =
+    phase === 'up' ? t('live.uploading')
+      : phase === 'down' ? t('live.downloading')
+        : phase === 'ping' ? t('live.pinging')
+          : t('live.preparing')
+
+  return (
+    <div className="flex min-w-0 flex-col items-center gap-3">
+      {/* 标题行:哪个节点(或总计)+ 当前阶段 */}
+      <div className="flex w-full items-center justify-between gap-2 text-sm">
+        <span className="min-w-0 truncate text-muted-foreground">
+          <span className="font-medium text-foreground">{title}</span>
+          {subtitle && <span className="ml-1 text-xs text-muted-foreground">· {subtitle}</span>}
+        </span>
+        <span className={cn('flex shrink-0 items-center gap-1 text-xs font-medium', phase === 'idle' ? 'text-muted-foreground' : accent)}>
+          {phase === 'up' ? <Upload className="h-4 w-4" />
+            : phase === 'down' ? <Download className="h-4 w-4" />
+              : <Activity className="h-4 w-4" />}
+          {phaseLabel}
+        </span>
+      </div>
+
+      {/* 表盘(响应式:窄屏/双表盘时自动缩小,不会被卡片裁切) */}
+      <div className="relative w-full" style={{ maxWidth: size }}>
+        <svg viewBox={`0 0 ${size} ${size}`} className="h-auto w-full overflow-visible">
+          {/* 轨道 */}
+          <path d={track} fill="none" stroke="currentColor" strokeWidth={strokeW} strokeLinecap="round" className="text-muted-foreground/15" />
+
+          {/* 刻度标签(置于弧外,避免与中心大数字拥挤) */}
+          {SCALE_MARKS.map((mb) => {
+            const f = speedFraction(mb * 1024 * 1024)
+            const p = polar(cx, cy, r + 13, START_ANGLE + f * SWEEP)
+            return (
+              <text key={mb} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" className="fill-muted-foreground/60" fontSize={10}>
+                {mb}
+              </text>
+            )
+          })}
+
+          {/* 进度弧 */}
+          <path
+            d={prog}
+            fill="none"
+            stroke={`url(#${gradId})`}
+            strokeWidth={strokeW}
+            strokeLinecap="round"
+            filter="url(#liveGlow)"
+            style={{ transition: 'stroke 0.4s ease' }}
+          />
+          {/* 弧头光点 */}
+          {frac > 0.001 && (
+            <circle cx={tip.x} cy={tip.y} r={7} className="fill-background" stroke={`url(#${gradId})`} strokeWidth={3} filter="url(#liveGlow)" />
+          )}
+        </svg>
+
+        {/* 中心数字(文字用前景色,颜色身份由弧线承载) */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <div className={cn('font-bold tabular-nums text-foreground', compact ? 'text-2xl sm:text-3xl' : 'text-4xl')}>
+            {bytesToSize(displayed)}
+          </div>
+          <div className="mt-1 text-sm font-medium text-muted-foreground">/s</div>
+        </div>
+      </div>
+
+      {footer}
+
+      {/* 实时曲线 + 峰值。key=resetKey:换节点/换方向直接重挂,采样窗口自然清零。 */}
+      <Sparkline
+        key={resetKey}
+        valueRef={displayedRef}
+        isUp={isUp}
+        label={isUp ? t('live.upload') : t('live.download')}
+        gradId={gradId}
+        fillId={fillId}
+        accent={accent}
+      />
+    </div>
+  )
+}
+
+export function LiveMeter() {
+  const t = useI18n()
+  const live = useTestStore((s) => s.live)
+  const result = useTestStore((s) => s.result)
+  const testCount = useTestStore((s) => s.testCount)
+  const runConcurrency = useTestStore((s) => s.runConcurrency)
+
+  const total = result.length
+  const progress = total > 0 ? Math.min(100, Math.floor((testCount / total) * 100)) : 0
+
+  const active = Object.values(live)
+  // 并发数决定形态:≤2 时一个节点一个表盘(各测各的,互不干扰);更多时并排放不下,
+  // 也没法逐个盯,改为只显示一个「总速率」表盘 —— 各节点当前样本之和才是真实的总吞吐。
+  const aggregate = runConcurrency > MAX_GAUGES
+  const totalDown = active.reduce((sum, n) => (n.phase === 'down' ? sum + n.bps : sum), 0)
+  const totalUp = active.reduce((sum, n) => (n.phase === 'up' ? sum + n.bps : sum), 0)
+
+  const nodeOf = (id: number) => result.find((n) => n.id === id)
+  const titleOf = (n: LiveNode) => nodeOf(n.id)?.remark || t('live.node', { id: n.id })
+
+  // 表盘位固定为 min(并发数, 2) 个,空位显示「准备中」而不是把布局挤掉一格。
+  const slots = aggregate ? [] : Array.from({ length: Math.min(runConcurrency, MAX_GAUGES) }, (_, i) => active.find((n) => n.slot === i))
+
+  // 卡片底色:只有「单表盘且正在上传」才切到紫色,多表盘时各路方向不一,保持中性青色。
+  const cardIsUp = !aggregate && slots.length === 1 && slots[0]?.phase === 'up'
 
   return (
     <motion.div
@@ -205,102 +354,51 @@ export function LiveMeter() {
         <div
           className="pointer-events-none absolute inset-0 opacity-60"
           style={{
-            background: isUp
+            background: cardIsUp
               ? 'radial-gradient(120% 80% at 50% 0%, rgba(167,139,250,0.12), transparent)'
               : 'radial-gradient(120% 80% at 50% 0%, rgba(34,211,238,0.12), transparent)',
           }}
         />
-        <div className="relative flex flex-col items-center gap-3">
-          {/* 当前节点 + 阶段 */}
-          <div className="flex w-full items-center justify-between text-sm">
-            <span className="truncate text-muted-foreground">
-              {t('live.testing')}
-              <span className="ml-1 font-medium text-foreground">
-                {node ? node.remark || t('live.node', { id: currentTestingId ?? 0 }) : t('live.preparing')}
-              </span>
-              {node?.protocol && <span className="ml-1 text-xs text-muted-foreground">· {node.protocol}</span>}
-            </span>
-            <span className={`flex shrink-0 items-center gap-1 font-medium ${accent}`}>
-              {isUp ? <Upload className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-              {isUp ? t('live.uploading') : t('live.downloading')}
-            </span>
-          </div>
-
-          {/* 表盘(响应式:窄屏自动缩小,不会被卡片裁切) */}
-          <div className="relative w-full" style={{ maxWidth: size }}>
-            <svg viewBox={`0 0 ${size} ${size}`} className="h-auto w-full overflow-visible">
-              <defs>
-                <linearGradient id="liveGradDown" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="#22d3ee" />
-                  <stop offset="100%" stopColor="#3b82f6" />
-                </linearGradient>
-                <linearGradient id="liveGradUp" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stopColor="#a855f7" />
-                  <stop offset="100%" stopColor="#ec4899" />
-                </linearGradient>
-                <linearGradient id="liveFillDown" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.45" />
-                  <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
-                </linearGradient>
-                <linearGradient id="liveFillUp" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#a855f7" stopOpacity="0.45" />
-                  <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
-                </linearGradient>
-                <filter id="liveGlow" x="-50%" y="-50%" width="200%" height="200%">
-                  <feGaussianBlur stdDeviation="4" result="b" />
-                  <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-                </filter>
-              </defs>
-
-              {/* 轨道 */}
-              <path d={track} fill="none" stroke="currentColor" strokeWidth={strokeW} strokeLinecap="round" className="text-muted-foreground/15" />
-
-              {/* 刻度标签(置于弧外,避免与中心大数字拥挤) */}
-              {SCALE_MARKS.map((mb) => {
-                const f = speedFraction(mb * 1024 * 1024)
-                const p = polar(cx, cy, r + 13, START_ANGLE + f * SWEEP)
-                return (
-                  <text
-                    key={mb}
-                    x={p.x}
-                    y={p.y}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    className="fill-muted-foreground/60"
-                    fontSize={10}
-                  >
-                    {mb}
-                  </text>
-                )
-              })}
-
-              {/* 进度弧 */}
-              <path
-                d={prog}
-                fill="none"
-                stroke={`url(#${gradId})`}
-                strokeWidth={strokeW}
-                strokeLinecap="round"
-                filter={`url(#${glowId})`}
-                style={{ transition: 'stroke 0.4s ease' }}
-              />
-              {/* 弧头光点 */}
-              {frac > 0.001 && (
-                <circle cx={tip.x} cy={tip.y} r={7} className="fill-background" stroke={`url(#${gradId})`} strokeWidth={3} filter={`url(#${glowId})`} />
-              )}
-            </svg>
-
-            {/* 中心数字(文字用前景色,颜色身份由弧线承载) */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <div className="text-4xl font-bold tabular-nums text-foreground">
-                {bytesToSize(displayed)}
-              </div>
-              <div className="mt-1 text-sm font-medium text-muted-foreground">/s</div>
+        <GaugeDefs />
+        <div className="relative flex flex-col items-center gap-4">
+          {aggregate ? (
+            <Gauge
+              title={t('live.total')}
+              subtitle={t('live.activeNodes', { n: active.length })}
+              phase={active.length ? 'down' : 'idle'}
+              bps={totalDown + totalUp}
+              resetKey="aggregate"
+              footer={
+                // 总速率把上下行加在了一起,这里拆开给出各自的分量,避免只看一个数字
+                // 分不清是谁贡献的。
+                <div className="flex w-full items-center justify-center gap-3 text-xs">
+                  <span className="flex items-center gap-1 rounded-md bg-secondary/50 px-2 py-1 text-cyan-400">
+                    <Download className="h-3.5 w-3.5" />
+                    <span className="font-mono">{bytesToSize(totalDown)}/s</span>
+                  </span>
+                  <span className="flex items-center gap-1 rounded-md bg-secondary/50 px-2 py-1 text-violet-400">
+                    <Upload className="h-3.5 w-3.5" />
+                    <span className="font-mono">{bytesToSize(totalUp)}/s</span>
+                  </span>
+                </div>
+              }
+            />
+          ) : (
+            <div className={cn('grid w-full gap-x-6 gap-y-4', slots.length > 1 && 'sm:grid-cols-2')}>
+              {slots.map((n, i) => (
+                <Gauge
+                  key={i}
+                  title={n ? titleOf(n) : t('live.preparing')}
+                  subtitle={n ? nodeOf(n.id)?.protocol : undefined}
+                  phase={n?.phase ?? 'idle'}
+                  bps={n?.bps ?? 0}
+                  // 表盘位换了节点、或同一节点换了方向,都重置缓动与曲线窗口。
+                  resetKey={`${i}-${n?.id ?? 'idle'}-${n?.phase ?? 'idle'}`}
+                  compact={slots.length > 1}
+                />
+              ))}
             </div>
-          </div>
-
-          {/* 实时曲线 + 峰值。key=dirKey:换节点/换方向直接重挂,采样窗口自然清零。 */}
-          <Sparkline key={dirKey} valueRef={displayedRef} isUp={isUp} gradId={gradId} fillId={fillId} accent={accent} />
+          )}
 
           {/* 进度 */}
           <div className="w-full">

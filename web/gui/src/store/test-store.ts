@@ -5,6 +5,35 @@ import { apiUrl } from '@/lib/api'
 import { tt } from '@/lib/i18n'
 import { getSpeed, formatSeconds } from '@/lib/utils'
 
+// LiveNode 是一个「正在测速」的节点的实时状态。slot 是它占的表盘位:并发数 ≤ 2 时
+// 每个节点各占一个表盘,节点结束后释放该位给下一个节点 —— 用「首个空位」而不是按 id
+// 排序,这样一个节点跑完时留在场上的那个不会横向跳位。
+export interface LiveNode {
+  id: number
+  slot: number
+  phase: 'ping' | 'down' | 'up'
+  bps: number
+}
+
+// upsertLive 更新/插入一个在测节点,首次出现时分配最小的空闲表盘位。
+function upsertLive(live: Record<number, LiveNode>, id: number, phase: LiveNode['phase'], bps: number): Record<number, LiveNode> {
+  const existing = live[id]
+  let slot = existing?.slot
+  if (slot === undefined) {
+    const used = new Set(Object.values(live).map((n) => n.slot))
+    slot = 0
+    while (used.has(slot)) slot++
+  }
+  return { ...live, [id]: { id, slot, phase, bps } }
+}
+
+function removeLive(live: Record<number, LiveNode>, id: number): Record<number, LiveNode> {
+  if (!(id in live)) return live
+  const next = { ...live }
+  delete next[id]
+  return next
+}
+
 interface TestState {
   // 测试状态
   loading: boolean
@@ -21,11 +50,10 @@ interface TestState {
   ipv4geo: string
   ipv6geo: string
 
-  // 实时速率(测速进行中,驱动实时表盘)
-  currentTestingId: number | null
-  currentDirection: 'down' | 'up' | null
-  liveDownloadBps: number
-  liveUploadBps: number
+  // 实时速率(测速进行中,驱动实时表盘)。按节点分别记录 —— 并发数 > 1 时同时有
+  // 多个节点在测,原先只有一个全局速率字段,谁的样本后到就覆盖谁,指针会在几个节点
+  // 之间来回漂。这里每个在测节点一条,表盘按并发数决定是分别显示还是显示总和。
+  live: Record<number, LiveNode>
 
   // 选择状态
   selectedNodes: TestNode[]
@@ -34,6 +62,8 @@ interface TestState {
   runUploadEnabled: boolean
   // 本次运行的测试模式快照(结果展示按它判定 ping/速度是否适用;避免测完改表单模式导致回填错乱)
   runMode: TestOptions['speedtestMode']
+  // 本次运行的并发数快照(实时表盘按它决定布局;测到一半改表单不该让表盘跟着变)
+  runConcurrency: number
 
   // 结果表格的用户偏好(持久化):列顺序、列宽、列可见性
   columnOrder: string[]
@@ -115,14 +145,12 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
   ipv6geo: '',
   runUploadEnabled: false,
   runMode: 'all',
+  runConcurrency: 1,
   columnOrder: [],
   columnSizing: {},
   columnVisibility: {},
   privacy: false,
-  currentTestingId: null,
-  currentDirection: null,
-  liveDownloadBps: 0,
-  liveUploadBps: 0,
+  live: {},
   selectedNodes: [],
   ws: null,
   options: defaultOptions,
@@ -222,10 +250,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
     ipv4geo: '',
     ipv6geo: '',
     runUploadEnabled: false,
-    currentTestingId: null,
-    currentDirection: null,
-    liveDownloadBps: 0,
-    liveUploadBps: 0,
+    live: {},
     selectedNodes: [],
   }),
 
@@ -306,7 +331,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
         }
         break
       case 'startping':
-        set({ currentTestingId: id })
+        set((s) => ({ live: upsertLive(s.live, id, 'ping', 0) }))
         state.updateNode(id, { ping: testing, testing: true })
         break
       case 'ipinfo':
@@ -326,30 +351,31 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
         state.updateNode(id, { ping: json.ping || 0 })
         break
       case 'startspeed':
-        set({ currentTestingId: id, currentDirection: 'down', liveDownloadBps: 0 })
+        set((s) => ({ live: upsertLive(s.live, id, 'down', 0) }))
         state.updateNode(id, { speed: testing, maxspeed: testing, testing: true })
         break
       case 'gotspeed':
         state.addTraffic(json.traffic || 0)
-        set({ currentTestingId: id, currentDirection: 'down', liveDownloadBps: json.traffic || 0 })
+        set((s) => ({ live: upsertLive(s.live, id, 'down', json.traffic || 0) }))
         state.updateNode(id, {
           speed: json.speed || 'N/A',
           maxspeed: json.maxspeed || 'N/A',
         })
         break
       case 'startupload':
-        set({ currentTestingId: id, currentDirection: 'up', liveUploadBps: 0 })
+        set((s) => ({ live: upsertLive(s.live, id, 'up', 0) }))
         state.updateNode(id, { uploadspeed: testing, maxuploadspeed: testing, testing: true })
         break
       case 'gotupload':
         state.addTraffic(json.traffic || 0)
-        set({ currentTestingId: id, currentDirection: 'up', liveUploadBps: json.traffic || 0 })
+        set((s) => ({ live: upsertLive(s.live, id, 'up', json.traffic || 0) }))
         state.updateNode(id, {
           uploadspeed: json.uploadspeed || 'N/A',
           maxuploadspeed: json.maxuploadspeed || 'N/A',
         })
         break
       case 'endone':
+        set((s) => ({ live: removeLive(s.live, id) }))
         state.updateNode(id, { testing: false, tested: true })
         break
       case 'picdata':
@@ -358,10 +384,7 @@ export const useTestStore = create<TestState>()(persist((set, get) => ({
       case 'eof':
         set((s) => ({
           loading: false,
-          currentTestingId: null,
-          currentDirection: null,
-          liveDownloadBps: 0,
-          liveUploadBps: 0,
+          live: {},
           // 兜底:清掉任何残留 testing:true 的节点(若某 id 的 endone 未送达),
           // 否则该行的选择复选框会永久禁用
           result: s.result.some((n) => n.testing)

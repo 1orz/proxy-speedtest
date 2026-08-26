@@ -160,7 +160,12 @@ export function TestForm() {
     const uploadEnable = options.uploadEnable && options.speedtestMode !== 'pingonly'
     reset()
     // 本次是否测上传、以及测试模式在开始时即快照,让结果展示不受之后表单改动影响
-    useTestStore.setState({ loading: true, runUploadEnabled: uploadEnable, runMode: options.speedtestMode })
+    useTestStore.setState({
+      loading: true,
+      runUploadEnabled: uploadEnable,
+      runMode: options.speedtestMode,
+      runConcurrency: options.concurrency,
+    })
 
     const subscriptions = isDirect
       ? []
